@@ -5,7 +5,12 @@ import re
 from pathlib import Path
 
 from misteye_depscan.models import DependencyItem, PackageType
-from misteye_depscan.parsers.base import DependencyParser, normalize_name, strip_version_operators
+from misteye_depscan.parsers.base import (
+    DependencyParser,
+    is_npm_package_root_package_json,
+    normalize_name,
+    strip_version_operators,
+)
 
 YARN_ENTRY = re.compile(r'^"?((?:@[^/]+/)?[^@\s"]+)@([^:\s"]+)"?:')
 PNPM_ENTRY = re.compile(r"^\s{2}(/(?:@[^/]+/)?[^/@]+)(?:@([^:]+))?:")
@@ -44,8 +49,11 @@ class JavaScriptParser(DependencyParser):
             return []
         items: list[DependencyItem] = []
 
-        # Installed package under node_modules (name + version at package root)
-        if "node_modules" in path.parts:
+        under_node_modules = "node_modules" in path.parts
+        at_package_root = is_npm_package_root_package_json(path)
+
+        # Installed package at node_modules/<pkg>/package.json only (not docs/, lib/, etc.)
+        if at_package_root:
             installed_name = str(data.get("name") or "").strip()
             installed_version = strip_version_operators(str(data.get("version") or ""))
             if installed_name and installed_version:
@@ -59,6 +67,10 @@ class JavaScriptParser(DependencyParser):
                         raw=f"{installed_name}@{installed_version}",
                     )
                 )
+
+        # Nested package.json inside a tarball (e.g. npm/docs/) — skip manifest sections too.
+        if under_node_modules and not at_package_root:
+            return items
 
         for section in (
             "dependencies",

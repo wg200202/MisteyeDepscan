@@ -127,18 +127,37 @@ def find_manifest_files(
     return sorted(found)
 
 
+def is_npm_package_root_package_json(path: Path) -> bool:
+    """
+    True when ``path`` is ``package.json`` at the install root of an npm package.
+
+    Only ``node_modules/<pkg>/package.json`` or ``node_modules/@scope/<pkg>/package.json``
+    count. Nested paths such as ``node_modules/npm/docs/package.json`` are internal
+    subfolders of a tarball (docs, examples, etc.) and must not be treated as separate
+    published packages — they often share names with unrelated malicious registry packages.
+    """
+    if path.name.lower() != "package.json" or "node_modules" not in path.parts:
+        return False
+    parts = path.parts
+    idx = max(i for i, part in enumerate(parts) if part == "node_modules")
+    segments = parts[idx + 1 : -1]
+    if not segments:
+        return False
+    if segments[0].startswith("@"):
+        return len(segments) == 2
+    return len(segments) == 1
+
+
 def find_node_modules_package_json(
     root: Path, *, max_depth: int | None = DEFAULT_MAX_DEPTH
 ) -> list[Path]:
-    """Installed npm packages under node_modules (depth-limited scan)."""
+    """Installed npm package roots under node_modules (depth-limited scan)."""
     root = root.resolve()
     found: list[Path] = []
     for path in _walk_with_depth(root, max_depth):
         if not path.is_file():
             continue
-        if path.name.lower() != "package.json":
-            continue
-        if "node_modules" not in path.parts:
+        if not is_npm_package_root_package_json(path):
             continue
         found.append(path)
     return sorted(found)
