@@ -54,6 +54,59 @@ def strip_version_operators(spec: str) -> str | None:
     return spec
 
 
+# package.json specs that are not registry packages (skip threat lookup)
+_NON_REGISTRY_SPEC_PREFIXES = (
+    "file:",
+    "link:",
+    "workspace:",
+    "git:",
+    "git+",
+    "github:",
+    "http:",
+    "https:",
+    "bitbucket:",
+    "gitlab:",
+)
+
+
+def _parse_npm_alias_payload(payload: str) -> tuple[str, str | None]:
+    """Parse ``fdir@1.2.0`` or ``@scope/pkg@1.0.0`` from an ``npm:`` alias spec."""
+    payload = payload.strip()
+    if not payload:
+        return "", None
+    if payload.startswith("@"):
+        idx = payload.rfind("@")
+        if idx <= 1:
+            return normalize_name(payload), None
+        return normalize_name(payload[:idx]), strip_version_operators(payload[idx + 1 :])
+    if "@" in payload:
+        name, ver = payload.rsplit("@", 1)
+        return normalize_name(name), strip_version_operators(ver)
+    return normalize_name(payload), None
+
+
+def resolve_npm_dependency(alias: str, spec: str) -> tuple[str, str | None] | None:
+    """
+    Resolve package name and version from a package.json dependency entry.
+
+    Handles npm aliases such as ``"fdir1": "npm:fdir@1.2.0"`` — uses ``fdir`` and
+    ``1.2.0``, not the alias key ``fdir1``. Returns ``None`` for non-registry specs
+    (``file:``, ``workspace:``, ``git:``, etc.).
+    """
+    raw = str(spec).strip()
+    if not raw:
+        return None
+    lower = raw.lower()
+    if any(lower.startswith(prefix) for prefix in _NON_REGISTRY_SPEC_PREFIXES):
+        return None
+    if lower.startswith("npm:"):
+        name, version = _parse_npm_alias_payload(raw[4:])
+        if not name:
+            return None
+        return name, version
+    return normalize_name(alias), strip_version_operators(raw)
+
+
 def _path_skipped_for_manifests(path: Path) -> bool:
     return any(part in MANIFEST_SKIP_DIR_NAMES for part in path.parts)
 

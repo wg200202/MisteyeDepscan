@@ -73,19 +73,17 @@ def render_table(report: ScanReport) -> str:
         lines.append("No scannable dependencies found.")
         return "\n".join(lines)
 
-    if unknown_count:
-        lines.append(
-            colorize(
-                "Note: \"No threat record\" means no match in MistEye intel; it does not guarantee the package is safe.",
-                DIM,
-            )
-        )
-        lines.append("")
+    malicious_results = [
+        r for r in report.results if r.status == ScanStatus.MALICIOUS
+    ]
+    if not malicious_results:
+        lines.append(colorize("No threats detected.", GREEN))
+        return "\n".join(lines)
 
     header_status = colorize("Status", BOLD)
     lines.append(f"{header_status:<16} {'Package':<40} {'Source':<28} Evidence")
     lines.append(colorize("-" * 110, DIM))
-    for result in report.results:
+    for result in malicious_results:
         target = result.dependency.target
         status_col = format_status(result.status, bold=True)
         source_display = Path(result.dependency.source).name

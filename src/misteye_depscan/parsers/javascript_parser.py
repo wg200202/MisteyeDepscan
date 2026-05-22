@@ -9,6 +9,7 @@ from misteye_depscan.parsers.base import (
     DependencyParser,
     is_npm_package_root_package_json,
     normalize_name,
+    resolve_npm_dependency,
     strip_version_operators,
 )
 
@@ -79,15 +80,20 @@ class JavaScriptParser(DependencyParser):
             "optionalDependencies",
         ):
             deps = data.get(section, {}) or {}
-            for name, spec in deps.items():
+            for alias, spec in deps.items():
+                resolved = resolve_npm_dependency(alias, str(spec))
+                if resolved is None:
+                    continue
+                pkg_name, version = resolved
+                raw = f"{pkg_name}@{version}" if version else pkg_name
                 items.append(
                     DependencyItem(
-                        name=normalize_name(name),
-                        version=strip_version_operators(str(spec)),
+                        name=pkg_name,
+                        version=version,
                         package_type=PackageType.NPM.value,
                         source=str(path),
-                        evidence=f"{section}.{name}",
-                        raw=f"{name}@{spec}",
+                        evidence=f"{section}.{alias}",
+                        raw=raw,
                     )
                 )
         return items
@@ -109,10 +115,11 @@ class JavaScriptParser(DependencyParser):
                 continue
             if pkg_path in {"", "node_modules"}:
                 continue
-            name = pkg_path.split("node_modules/")[-1]
+            path_name = pkg_path.split("node_modules/")[-1]
+            name = normalize_name(str(meta.get("name") or path_name))
             items.append(
                 DependencyItem(
-                    name=normalize_name(name),
+                    name=name,
                     version=str(version),
                     package_type=PackageType.NPM.value,
                     source=str(path),
