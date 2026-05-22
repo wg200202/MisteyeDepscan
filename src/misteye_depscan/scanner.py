@@ -7,10 +7,11 @@ from misteye_depscan.api import (
     API_STATUS_UNKNOWN,
     MistEyeAPIError,
     MistEyeClient,
+    build_search_url,
     parse_detect_response,
 )
 from misteye_depscan.models import DependencyItem, DetectionResult, ScanReport, ScanStatus
-from misteye_depscan.terminal import DIM, colorize, format_progress_result
+from misteye_depscan.terminal import DIM, colorize, format_progress_result, hyperlink
 
 
 class DependencyScanner:
@@ -39,12 +40,22 @@ class DependencyScanner:
                 executor.submit(self._scan_one, dependency): dependency
                 for dependency in dependencies
             }
-            for future in as_completed(futures):
-                result = future.result()
-                results.append(result)
-                completed += 1
+            try:
+                for future in as_completed(futures):
+                    result = future.result()
+                    results.append(result)
+                    completed += 1
+                    if self.show_progress:
+                        print(self._format_progress_line(completed, total, result), flush=True)
+            except KeyboardInterrupt:
+                for f in futures:
+                    f.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
                 if self.show_progress:
-                    print(self._format_progress_line(completed, total, result), flush=True)
+                    print(
+                        f"\nScan interrupted ({completed}/{total} completed).",
+                        flush=True,
+                    )
 
         report.results = sorted(
             results,
@@ -67,7 +78,8 @@ class DependencyScanner:
     def _format_progress_line(
         completed: int, total: int, result: DetectionResult
     ) -> str:
-        target = result.dependency.target
+        dep = result.dependency
+        target = dep.target
         severity = None
         if result.status == ScanStatus.MALICIOUS and result.matches:
             severity = str(result.matches[0].get("severity") or "")
@@ -77,7 +89,12 @@ class DependencyScanner:
             error=result.error,
         )
         prefix = colorize(f"[{completed}/{total}]", DIM)
-        return f"{prefix} {target} → {detail}"
+        line = f"{prefix} {target} → {detail}"
+        if result.status == ScanStatus.MALICIOUS:
+            line += f"\n       Source: {dep.source}"
+            url = build_search_url(dep.api_target, dep.package_type)
+            line += "\n       Detail: " + hyperlink(url, url)
+        return line
 
     def _scan_one(self, dependency: DependencyItem) -> DetectionResult:
         if not dependency.name:

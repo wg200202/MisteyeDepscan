@@ -8,9 +8,28 @@ import urllib.request
 from typing import Any
 
 DETECT_URL = "https://app-api.misteye.io/functions/v1/detect"
+MISTEYE_WEB_BASE = "https://app.misteye.io/home"
 DEFAULT_RATE_LIMIT = 10.0  # requests per second
 API_STATUS_MALICIOUS = "malicious"
 API_STATUS_UNKNOWN = "unknown"
+
+# API package_type → MistEye web UI type parameter
+_WEB_TYPE_MAP: dict[str, str] = {
+    "package:pypi": "pip",
+    "package:npm": "npm",
+    "package:go": "go",
+    "package:nuget": "nuget",
+    "package:rubygems": "rubygems",
+    "package:cratesio": "cratesio",
+}
+
+
+def build_search_url(target: str, package_type: str) -> str:
+    """Build the MistEye web console URL for viewing threat details."""
+    from urllib.parse import quote
+    web_type = _WEB_TYPE_MAP.get(package_type, package_type)
+    ioc = quote(target, safe="")
+    return f"{MISTEYE_WEB_BASE}?ioc={ioc}&type={web_type}"
 
 
 class RateLimiter:

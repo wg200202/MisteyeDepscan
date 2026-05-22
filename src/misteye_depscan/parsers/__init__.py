@@ -58,7 +58,10 @@ def _parse_manifest_path(path: Path, *, include_optional: bool) -> list[Dependen
     parser = get_parser_for(path, include_optional=include_optional)
     if parser is None:
         return []
-    return parser.parse(path)
+    try:
+        return parser.parse(path)
+    except (OSError, ValueError, KeyError):
+        return []
 
 
 def collect_project_dependencies(
@@ -67,25 +70,41 @@ def collect_project_dependencies(
     ecosystems: set[str] | None = None,
     include_optional: bool = False,
     scan_node_modules: bool = True,
-) -> tuple[list[DependencyItem], list[str]]:
+    max_depth: int | None = None,
+) -> tuple[list[DependencyItem], list[str], list[Path]]:
     """
     Collect dependencies from manifest files and (for npm) installed node_modules packages.
+
+    ``max_depth`` controls how many directory levels are traversed (default from
+    ``base.DEFAULT_MAX_DEPTH``).  Pass ``None`` for unlimited depth or ``0`` to
+    only scan files directly in ``root``.
+
+    Returns ``(dependencies, warnings, discovered_files)`` where *discovered_files*
+    is the list of manifest / lock / package.json paths that were actually parsed.
     """
+    from misteye_depscan.parsers.base import DEFAULT_MAX_DEPTH
+
+    if max_depth is None:
+        max_depth = DEFAULT_MAX_DEPTH
+
     if ecosystems is None:
         ecosystems = set(SUPPORTED_ECOSYSTEMS)
 
     items: list[DependencyItem] = []
     warnings: list[str] = []
+    discovered_files: list[Path] = []
 
     manifest_files = find_manifest_files(
-        root, ecosystems=ecosystems, include_optional=include_optional
+        root, ecosystems=ecosystems, include_optional=include_optional, max_depth=max_depth
     )
+    discovered_files.extend(manifest_files)
     for file_path in manifest_files:
         items.extend(_parse_manifest_path(file_path, include_optional=include_optional))
 
     if "npm" in ecosystems and scan_node_modules:
-        nm_files = find_node_modules_package_json(root)
+        nm_files = find_node_modules_package_json(root, max_depth=max_depth)
         if nm_files:
+            discovered_files.extend(nm_files)
             for pkg_json in nm_files:
                 items.extend(_NPM_PARSER.parse(pkg_json))
         elif "package.json" in {p.name for p in manifest_files}:
@@ -93,7 +112,7 @@ def collect_project_dependencies(
                 "npm ecosystem detected but no node_modules/ tree found (installed packages not scanned)."
             )
 
-    return dedupe_dependencies(items), warnings
+    return dedupe_dependencies(items), warnings, discovered_files
 
 
 def dedupe_dependencies(items: list[DependencyItem]) -> list[DependencyItem]:

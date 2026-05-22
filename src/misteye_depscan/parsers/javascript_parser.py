@@ -36,7 +36,12 @@ class JavaScriptParser(DependencyParser):
         return []
 
     def _parse_package_json(self, path: Path) -> list[DependencyItem]:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        if not isinstance(data, dict):
+            return []
         items: list[DependencyItem] = []
 
         # Installed package under node_modules (name + version at package root)
@@ -76,7 +81,12 @@ class JavaScriptParser(DependencyParser):
         return items
 
     def _parse_package_lock(self, path: Path) -> list[DependencyItem]:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        if not isinstance(data, dict):
+            return []
         items: list[DependencyItem] = []
         packages = data.get("packages") or {}
         for pkg_path, meta in packages.items():

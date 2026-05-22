@@ -88,3 +88,10 @@ def format_progress_result(
 def format_summary_value(label: str, value: int, color: str) -> str:
     text = f"{label}: {value}"
     return colorize(text, color) if value > 0 else text
+
+
+def hyperlink(url: str, text: str) -> str:
+    """Wrap *text* in an OSC 8 terminal hyperlink if color/escape is enabled."""
+    if not use_color():
+        return text
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"

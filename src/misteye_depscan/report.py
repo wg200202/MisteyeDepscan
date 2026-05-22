@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from misteye_depscan.api import build_search_url
 from misteye_depscan.models import DependencyItem, DetectionResult, ScanReport, ScanStatus
 from misteye_depscan.terminal import (
     BOLD,
@@ -15,6 +16,7 @@ from misteye_depscan.terminal import (
     colorize,
     format_status,
     format_summary_value,
+    hyperlink,
     status_label,
 )
 
@@ -98,6 +100,9 @@ def render_table(report: ScanReport) -> str:
                         RED,
                     )
                 )
+            lines.append(colorize(f"           Source: {result.dependency.source}", DIM))
+            url = build_search_url(result.dependency.api_target, result.dependency.package_type)
+            lines.append(colorize(f"           Detail: ", DIM) + hyperlink(url, url))
         elif result.error:
             lines.append(colorize(f"           {result.error}", YELLOW))
     return "\n".join(lines)
@@ -124,7 +129,7 @@ def render_json(report: ScanReport) -> str:
 
 
 def _result_to_dict(result: DetectionResult) -> dict:
-    return {
+    d: dict = {
         "status": result.status.value,
         "status_label": status_label(result.status),
         "api_status": result.api_status,
@@ -136,6 +141,11 @@ def _result_to_dict(result: DetectionResult) -> dict:
         "matches": result.matches,
         "error": result.error,
     }
+    if result.status == ScanStatus.MALICIOUS:
+        d["detail_url"] = build_search_url(
+            result.dependency.api_target, result.dependency.package_type
+        )
+    return d
 
 
 def render_sarif(report: ScanReport) -> str:

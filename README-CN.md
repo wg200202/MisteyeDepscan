@@ -116,6 +116,11 @@ depscan global --json
 # 将完整报告保存到文件
 depscan scan . -o report.json
 depscan global -o global-report.json
+
+# 控制扫描深度（默认 10 层）
+depscan scan . --depth 20       # 扫更深
+depscan scan . --depth 1        # 只扫根目录一级
+depscan scan . --depth 0        # 无限深度（完整递归）
 ```
 
 ## 扫描结果与进度

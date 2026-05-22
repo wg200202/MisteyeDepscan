@@ -69,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not scan installed packages under node_modules/.",
     )
+    scan_parser.add_argument(
+        "--depth",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Max directory depth to scan (default: 10). Use 0 for unlimited.",
+    )
 
     global_parser = subparsers.add_parser("global", help="Scan globally installed packages.")
     global_parser.add_argument("--json", action="store_true", help="Output JSON report.")
@@ -140,6 +147,43 @@ def parse_package_ref(package: str, *, npm: bool = False, pypi: bool = False) ->
     )
 
 
+def _print_discovered_files(root: Path, files: list[Path]) -> None:
+    if not files:
+        print("No dependency files found.", file=sys.stderr)
+        return
+
+    from collections import defaultdict
+
+    nm_files: list[Path] = []
+    manifest_files: list[Path] = []
+    for f in files:
+        (nm_files if "node_modules" in f.parts else manifest_files).append(f)
+
+    print(f"Discovered {len(files)} dependency file(s):", file=sys.stderr)
+    for f in manifest_files:
+        try:
+            rel = f.relative_to(root)
+        except ValueError:
+            rel = f
+        print(f"  {rel}", file=sys.stderr)
+
+    if nm_files:
+        groups: dict[Path, int] = defaultdict(int)
+        for f in nm_files:
+            parts = f.parts
+            try:
+                idx = parts.index("node_modules")
+            except ValueError:
+                continue
+            groups[Path(*parts[: idx + 1])] += 1
+        for nm_dir, count in sorted(groups.items()):
+            try:
+                rel = nm_dir.relative_to(root)
+            except ValueError:
+                rel = nm_dir
+            print(f"  {rel}/ ({count} packages)", file=sys.stderr)
+
+
 def _resolve_api_key() -> str:
     key = load_api_key(interactive=False)
     if key:
@@ -161,15 +205,20 @@ def run_scan(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 3
 
-    dependencies, collect_warnings = collect_project_dependencies(
+    depth = getattr(args, "depth", 3)
+    max_depth: int | None = None if depth == 0 else depth
+
+    dependencies, collect_warnings, discovered_files = collect_project_dependencies(
         root,
         ecosystems=ecosystems,
         include_optional=args.include_optional,
         scan_node_modules=not getattr(args, "no_node_modules", False),
+        max_depth=max_depth,
     )
     if not args.quiet:
         eco_text = ", ".join(sorted(ecosystems))
         print(f"Ecosystems: {eco_text}", file=sys.stderr)
+        _print_discovered_files(root, discovered_files)
     return _run_detection(
         dependencies,
         output_json=args.json,
@@ -251,6 +300,14 @@ def _run_detection(
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main_inner(argv)
+    except KeyboardInterrupt:
+        print("\nAborted.", file=sys.stderr)
+        return 130
+
+
+def _main_inner(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     set_color_enabled(not args.no_color)
@@ -266,4 +323,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("\nAborted.", file=sys.stderr)
+        raise SystemExit(130)

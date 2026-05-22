@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from misteye_depscan.ecosystems import MANIFEST_SKIP_DIR_NAMES
 from misteye_depscan.models import DependencyItem
+
+DEFAULT_MAX_DEPTH = 10
 
 OPTIONAL_MANIFEST_NAMES = {
     "go.mod",
@@ -68,11 +71,30 @@ def _matches_ecosystem_filename(path: Path, ecosystem: str) -> bool:
     return False
 
 
+def _walk_with_depth(root: Path, max_depth: int | None) -> list[Path]:
+    """Walk ``root`` recursively up to ``max_depth`` levels.  ``None`` = unlimited."""
+    root = root.resolve()
+    if max_depth is None:
+        return list(root.rglob("*"))
+    results: list[Path] = []
+    root_depth = len(root.parts)
+    for dirpath, dirnames, filenames in os.walk(root):
+        current = Path(dirpath)
+        depth = len(current.parts) - root_depth
+        if depth >= max_depth:
+            dirnames.clear()
+            continue
+        for fname in filenames:
+            results.append(current / fname)
+    return results
+
+
 def find_manifest_files(
     root: Path,
     *,
     ecosystems: set[str] | None = None,
     include_optional: bool = False,
+    max_depth: int | None = DEFAULT_MAX_DEPTH,
 ) -> list[Path]:
     """Find dependency manifest/lock files outside node_modules, .venv, vendor, etc."""
     root = root.resolve()
@@ -85,7 +107,7 @@ def find_manifest_files(
         return [root]
 
     found: list[Path] = []
-    for path in root.rglob("*"):
+    for path in _walk_with_depth(root, max_depth):
         if not path.is_file() or _path_skipped_for_manifests(path):
             continue
         name = path.name.lower()
@@ -105,11 +127,17 @@ def find_manifest_files(
     return sorted(found)
 
 
-def find_node_modules_package_json(root: Path) -> list[Path]:
-    """Installed npm packages under node_modules (full tree scan per spec)."""
+def find_node_modules_package_json(
+    root: Path, *, max_depth: int | None = DEFAULT_MAX_DEPTH
+) -> list[Path]:
+    """Installed npm packages under node_modules (depth-limited scan)."""
     root = root.resolve()
     found: list[Path] = []
-    for path in root.rglob("package.json"):
+    for path in _walk_with_depth(root, max_depth):
+        if not path.is_file():
+            continue
+        if path.name.lower() != "package.json":
+            continue
         if "node_modules" not in path.parts:
             continue
         found.append(path)

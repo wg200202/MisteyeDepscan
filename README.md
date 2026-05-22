@@ -114,6 +114,11 @@ depscan global --json
 # Save full report to a file
 depscan scan . -o report.json
 depscan global -o global-report.json
+
+# Control scan depth (default: 10 levels)
+depscan scan . --depth 20       # deeper
+depscan scan . --depth 1        # only root level
+depscan scan . --depth 0        # unlimited (full recursive)
 ```
 
 ## Scan results and progress
