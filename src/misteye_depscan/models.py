@@ -58,7 +58,6 @@ class DetectionResult:
     matches: list[dict[str, Any]] = field(default_factory=list)
     status: ScanStatus = ScanStatus.NO_CHECK
     error: str | None = None
-    from_cache: bool = False
 
 
 @dataclass

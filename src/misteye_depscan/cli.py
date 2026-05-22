@@ -49,11 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include optional ecosystems (Go/Rust/Ruby/.NET/Java).",
     )
     scan_parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="Disable scan result cache.",
-    )
-    scan_parser.add_argument(
         "--quiet",
         action="store_true",
         help="Hide scan progress output.",
@@ -98,7 +93,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include optional global collectors (Go/Cargo).",
     )
-    global_parser.add_argument("--no-cache", action="store_true", help="Disable scan cache.")
     global_parser.add_argument("--quiet", action="store_true", help="Hide scan progress output.")
     global_parser.add_argument(
         "-o",
@@ -114,7 +108,6 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument("--json", action="store_true", help="Output JSON report.")
     check_parser.add_argument("--sarif", action="store_true", help="Output SARIF report.")
     check_parser.add_argument("--quiet", action="store_true", help="Hide scan progress output.")
-    check_parser.add_argument("--no-cache", action="store_true", help="Disable scan cache.")
 
     return parser
 
@@ -181,7 +174,6 @@ def run_scan(args: argparse.Namespace) -> int:
         dependencies,
         output_json=args.json,
         output_sarif=args.sarif,
-        use_cache=not args.no_cache,
         quiet=args.quiet,
         warnings=collect_warnings,
         output_file=getattr(args, "output", None),
@@ -201,7 +193,6 @@ def run_global(args: argparse.Namespace) -> int:
         dependencies,
         output_json=args.json,
         output_sarif=args.sarif,
-        use_cache=not args.no_cache,
         quiet=args.quiet,
         warnings=warnings,
         output_file=getattr(args, "output", None),
@@ -214,7 +205,6 @@ def run_check(args: argparse.Namespace) -> int:
         [dependency],
         output_json=args.json,
         output_sarif=args.sarif,
-        use_cache=not args.no_cache,
         quiet=args.quiet,
         warnings=[],
     )
@@ -225,7 +215,6 @@ def _run_detection(
     *,
     output_json: bool,
     output_sarif: bool = False,
-    use_cache: bool,
     quiet: bool,
     warnings: list[str],
     output_file: str | None = None,
@@ -234,7 +223,6 @@ def _run_detection(
     client = MistEyeClient(api_key)
     scanner = DependencyScanner(
         client,
-        use_cache=use_cache,
         show_progress=not quiet and not output_json and not output_sarif,
     )
     report = scanner.scan_dependencies(dependencies)

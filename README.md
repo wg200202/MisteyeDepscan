@@ -1,5 +1,7 @@
 # MistEye DepScan
 
+[中文](README-CN.md)
+
 A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-docs) threat intelligence API to scan project dependencies and globally installed packages for known malicious packages and versions.
 
 ## Features
@@ -9,7 +11,7 @@ A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-doc
 - Python and JS/TS manifest and lock files; optional Go / Rust / Ruby / .NET / Java
 - Global scanning for pip / npm (including scoped `@scope/pkg`) / pnpm / nvm / pyenv / conda (optional collectors)
 - Output: terminal table / JSON / SARIF
-- API rate limiting (10 req/s) and local cache
+- API rate limiting (10 req/s)
 - Per-package progress during scans; save full reports with `-o`
 
 ## Installation
@@ -103,7 +105,7 @@ depscan global --node-only
 # Check a single package
 depscan check requests@2.32.3
 depscan check lodash@4.17.21 --npm
-depscan check requests==2.32.3 --pypi --no-cache
+depscan check requests==2.32.3 --pypi
 
 # JSON / SARIF (CI-friendly)
 depscan scan . --json
@@ -117,13 +119,7 @@ depscan global -o global-report.json
 
 ## Scan results and progress
 
-### What is persisted?
-
-| Type | Default | Location / notes |
-|------|---------|------------------|
-| **Per-package cache** | On | `~/.cache/misteye-depscan/*.json`; same package@version skips API on rescan (`[cached]` in progress) |
-| **Full report** | Terminal only | Use `--json` or `-o report.json` to save |
-| **Disable cache** | — | `depscan scan . --no-cache` or `depscan check pkg --no-cache` |
+Every scan queries the MistEye API (no local result cache). This ensures newly discovered threats are never missed.
 
 ### Progress output
 
@@ -131,11 +127,13 @@ Each completed package prints one line (concurrent scan; order may differ from t
 
 ```text
 [1/120] requests@2.32.3 → No threat record
-[2/120] lodash@4.17.21 → No threat record [cached]
+[2/120] lodash@4.17.21 → No threat record
 [3/120] evil-pkg@1.0.0 → Threat detected · critical
 ```
 
 API `status: unknown` is shown as **No threat record** (green), not the raw word `unknown`; this does **not** mean the package is guaranteed safe.
+
+Save full report: `depscan scan . -o report.json` or `depscan global -o global-report.json`.
 
 Quiet mode: `--quiet`. Disable colors: `depscan --no-color scan .` or `NO_COLOR=1`.
 

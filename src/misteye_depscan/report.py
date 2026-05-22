@@ -130,7 +130,6 @@ def _result_to_dict(result: DetectionResult) -> dict:
         "raw": result.dependency.raw,
         "matches": result.matches,
         "error": result.error,
-        "from_cache": result.from_cache,
     }
 
 
