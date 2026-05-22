@@ -16,9 +16,6 @@ OPTIONAL_MANIFEST_NAMES = {
     "gemfile.lock",
     "composer.json",
     "composer.lock",
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
 }
 
 

@@ -119,30 +119,55 @@ def _npm_global_root() -> Path | None:
     return root if root.exists() else None
 
 
-def _collect_node_modules(root: Path, source: str) -> list[DependencyItem]:
+def collect_node_modules(root: Path, source: str) -> list[DependencyItem]:
+    """Recursively collect installed npm packages under ``root``.
+
+    Walks the top level (``root``) and every nested ``node_modules/`` directory
+    underneath, so bundled deps (e.g. the npm CLI's own deps under
+    ``lib/node_modules/npm/node_modules/``) are not missed.
+    """
     items: list[DependencyItem] = []
     if not root.exists():
         return items
-    for package_json in list(root.glob("*/package.json")) + list(root.glob("@*/*/package.json")):
-        try:
-            data = json.loads(package_json.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        name = str(data.get("name") or package_json.parent.name).strip()
-        version = str(data.get("version") or "").strip() or None
-        if not name:
-            continue
-        items.append(
-            DependencyItem(
-                name=name,
-                version=version,
-                package_type=PackageType.NPM.value,
-                source=source,
-                evidence=str(package_json),
-                raw=f"{name}@{version}" if version else name,
-            )
+
+    dirs_to_scan: list[Path] = [root]
+    for nested in root.rglob("node_modules"):
+        if nested.is_dir():
+            dirs_to_scan.append(nested)
+
+    seen: set[tuple[str, str | None]] = set()
+    for nm_dir in dirs_to_scan:
+        package_jsons = list(nm_dir.glob("*/package.json")) + list(
+            nm_dir.glob("@*/*/package.json")
         )
+        for package_json in package_jsons:
+            try:
+                data = json.loads(package_json.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            name = str(data.get("name") or package_json.parent.name).strip()
+            version = str(data.get("version") or "").strip() or None
+            if not name:
+                continue
+            key = (name.lower(), version)
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(
+                DependencyItem(
+                    name=name,
+                    version=version,
+                    package_type=PackageType.NPM.value,
+                    source=source,
+                    evidence=str(package_json),
+                    raw=f"{name}@{version}" if version else name,
+                )
+            )
     return items
+
+
+# Backward-compatible alias for internal callers.
+_collect_node_modules = collect_node_modules
 
 
 class NpmGlobalRootCollector(GlobalCollector):

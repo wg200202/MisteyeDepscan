@@ -1,6 +1,6 @@
 # MistEye DepScan
 
-[中文](README-CN.md)
+[中文版](README-CN.md) | [English](README.md)
 
 A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-docs) threat intelligence API to scan project dependencies and globally installed packages for known malicious packages and versions.
 
@@ -8,7 +8,7 @@ A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-doc
 
 - Minimal runtime dependencies (Python 3.10+; `tomli` is installed automatically on 3.10 for `pyproject.toml` parsing)
 - Simple commands: `scan` / `global` / `check`
-- Python and JS/TS manifest and lock files; optional Go / Rust / Ruby / .NET / Java
+- Python and JS/TS manifest and lock files; optional Go / Rust / Ruby / .NET
 - Global scanning for pip / npm (including scoped `@scope/pkg`) / pnpm / nvm / pyenv / conda (optional collectors)
 - Output: terminal table / JSON / SARIF
 - API rate limiting (10 req/s)
@@ -103,9 +103,8 @@ depscan global --python-only
 depscan global --node-only
 
 # Check a single package
-depscan check requests@2.32.3
-depscan check lodash@4.17.21 --npm
 depscan check requests==2.32.3 --pypi
+depscan check lodash@4.17.21 --npm
 
 # JSON / SARIF (CI-friendly)
 depscan scan . --json
@@ -126,7 +125,7 @@ Every scan queries the MistEye API (no local result cache). This ensures newly d
 Each completed package prints one line (concurrent scan; order may differ from the dependency list):
 
 ```text
-[1/120] requests@2.32.3 → No threat record
+[1/120] requests==2.32.3 → No threat record
 [2/120] lodash@4.17.21 → No threat record
 [3/120] evil-pkg@1.0.0 → Threat detected · critical
 ```
@@ -176,7 +175,8 @@ depscan scan . --no-node-modules
 - Rust: `Cargo.toml`, `Cargo.lock`
 - Ruby: `Gemfile`, `Gemfile.lock`
 - .NET: `*.csproj`, `packages.lock.json`
-- Java: `pom.xml`, `build.gradle`, `build.gradle.kts`
+
+> **Java / Maven is not supported.** The MistEye Detect API does not yet expose a `package:maven` type, so Java coordinates are intentionally not scanned to avoid false positives.
 
 ```bash
 depscan scan . --include-optional
@@ -185,7 +185,7 @@ depscan global --include-optional
 
 ## API response
 
-MistEye Detect API uses `status` (see [20260521-API更新对接.md](20260521-API更新对接.md)):
+MistEye Detect API uses `status`:
 
 ```json
 { "status": "malicious", "matches": [...] }
@@ -206,7 +206,7 @@ MistEye Detect API uses `status` (see [20260521-API更新对接.md](20260521-API
 | 2 | Incomplete scan (API/network/coverage) |
 | 3 | Configuration error (bad path, missing API key) |
 
-PyPI API targets use `name==version`; npm uses `name@version`.
+PyPI uses `name==version`; npm and other ecosystems use `name@version` for both display and API requests. Cross-ecosystem matches (e.g. an npm-only threat indicator returned for a PyPI scan) are ignored to avoid false positives caused by same-name packages across ecosystems.
 
 ## CI/CD example
 

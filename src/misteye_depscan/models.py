@@ -32,19 +32,17 @@ class DependencyItem:
 
     @property
     def target(self) -> str:
-        """Display label (name@version for all ecosystems)."""
-        if self.version:
-            return f"{self.name}@{self.version}"
-        return self.name
-
-    @property
-    def api_target(self) -> str:
-        """Target string sent to MistEye detect API."""
+        """Canonical label: PyPI uses ``name==version``; other ecosystems use ``name@version``."""
         if not self.version:
             return self.name
         if self.package_type == PackageType.PYPI.value:
             return f"{self.name}=={self.version}"
         return f"{self.name}@{self.version}"
+
+    @property
+    def api_target(self) -> str:
+        """Target string sent to MistEye detect API (same format as ``target``)."""
+        return self.target
 
     @property
     def key(self) -> tuple[str, str | None, str]:

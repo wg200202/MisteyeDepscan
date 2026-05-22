@@ -1,6 +1,6 @@
 # MistEye DepScan
 
-[English](README.md)
+[中文版](README-CN.md) | [English](README.md)
 
 面向 [MistEye](https://app.misteye.io/api-docs) 威胁情报 API 的轻量 CLI，用于扫描项目依赖与全局已安装包中的已知恶意包及恶意版本。
 
@@ -8,7 +8,7 @@
 
 - 运行时依赖极少（Python 3.10+；在 3.10 上会自动安装 `tomli` 以解析 `pyproject.toml`）
 - 三个子命令：`scan` / `global` / `check`
-- 支持 Python 与 JS/TS 清单及锁文件；可选 Go / Rust / Ruby / .NET / Java
+- 支持 Python 与 JS/TS 清单及锁文件；可选 Go / Rust / Ruby / .NET
 - 全局扫描：pip / npm（含 scoped 包 `@scope/pkg`）/ pnpm / nvm / pyenv / conda（部分为可选收集器）
 - 输出格式：终端表格 / JSON / SARIF
 - API 限流（10 次/秒）
@@ -105,9 +105,8 @@ depscan global --python-only
 depscan global --node-only
 
 # 检查单个包
-depscan check requests@2.32.3
-depscan check lodash@4.17.21 --npm
 depscan check requests==2.32.3 --pypi
+depscan check lodash@4.17.21 --npm
 
 # JSON / SARIF（适合 CI）
 depscan scan . --json
@@ -128,7 +127,7 @@ depscan global -o global-report.json
 每完成一个包输出一行（并发扫描，顺序可能与依赖列表不一致）：
 
 ```text
-[1/120] requests@2.32.3 → No threat record
+[1/120] requests==2.32.3 → No threat record
 [2/120] lodash@4.17.21 → No threat record
 [3/120] evil-pkg@1.0.0 → Threat detected · critical
 ```
@@ -178,7 +177,8 @@ depscan scan . --no-node-modules
 - Rust：`Cargo.toml`、`Cargo.lock`
 - Ruby：`Gemfile`、`Gemfile.lock`
 - .NET：`*.csproj`、`packages.lock.json`
-- Java：`pom.xml`、`build.gradle`、`build.gradle.kts`
+
+> **暂不支持 Java / Maven**。MistEye Detect API 目前没有 `package:maven` 类型，把 Maven 坐标按其他生态发送会产生误报，所以工具暂不解析 Java 依赖。
 
 ```bash
 depscan scan . --include-optional
@@ -187,7 +187,7 @@ depscan global --include-optional
 
 ## API 响应
 
-MistEye Detect API 使用 `status` 字段（详见 [20260521-API更新对接.md](20260521-API更新对接.md)）：
+MistEye Detect API 使用 `status` 字段：
 
 ```json
 { "status": "malicious", "matches": [...] }
@@ -208,7 +208,7 @@ MistEye Detect API 使用 `status` 字段（详见 [20260521-API更新对接.md]
 | 2 | 扫描未完成（API/网络/覆盖率问题） |
 | 3 | 配置错误（路径无效、缺少 API Key 等） |
 
-调用 API 时：PyPI 使用 `name==version`；npm 使用 `name@version`。
+展示与调用 API 时：PyPI 使用 `name==version`；npm 等其他生态使用 `name@version`。**跨生态命中会被忽略**——比如扫描的是 PyPI 包，但 API 返回的 match.type 是 `package:npm`（npm 情报库中有同名恶意包），该条命中不会算作威胁，避免「PyPI/npm 同名包」造成的误报。
 
 ## CI/CD 示例
 

@@ -109,8 +109,24 @@ class DependencyScanner:
                 error=str(exc),
             )
 
-        if api_status == API_STATUS_MALICIOUS or matches:
+        # Cross-ecosystem guard: only matches whose ``type`` agrees with what
+        # we sent count as a real hit. The MistEye intel DB may contain a
+        # package with the same name in another ecosystem (e.g. npm and PyPI
+        # both have a package called ``loguru``); treating that as a hit for
+        # the wrong ecosystem produces false positives.
+        requested_type = dependency.package_type
+        filtered_matches = [
+            m for m in matches if m.get("type") == requested_type
+        ]
+        dropped = len(matches) - len(filtered_matches)
+        matches = filtered_matches
+
+        if matches:
             status = ScanStatus.MALICIOUS
+        elif api_status == API_STATUS_MALICIOUS:
+            # API said malicious, but every match was for another ecosystem.
+            # Demote to unknown so we don't false-positive on this dependency.
+            status = ScanStatus.UNKNOWN
         elif api_status == API_STATUS_UNKNOWN:
             status = ScanStatus.UNKNOWN
         else:
@@ -122,9 +138,17 @@ class DependencyScanner:
                 error=f"Unexpected API status: {api_status}",
             )
 
+        error: str | None = None
+        if dropped and status == ScanStatus.UNKNOWN:
+            error = (
+                f"Ignored {dropped} match(es) from other ecosystem(s); "
+                f"only {requested_type} matches count for this dependency."
+            )
+
         return DetectionResult(
             dependency=dependency,
             api_status=api_status,
             matches=matches,
             status=status,
+            error=error,
         )

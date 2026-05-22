@@ -12,13 +12,16 @@ from misteye_depscan.parsers.javascript_parser import JavaScriptParser
 from misteye_depscan.parsers.others import (
     DotNetParser,
     GoParser,
-    JavaParser,
     RubyParser,
     RustParser,
 )
 from misteye_depscan.parsers.python_parser import PythonParser
 from misteye_depscan.models import DependencyItem
 
+# Note: Java/Maven is intentionally NOT included.
+# MistEye Detect API supports only:
+#   package:pypi / package:npm / package:go / package:nuget / package:rubygems / package:cratesio
+# Sending Java coordinates under any of those types would cause false positives.
 ALL_PARSERS: list[DependencyParser] = [
     PythonParser(),
     JavaScriptParser(),
@@ -26,7 +29,6 @@ ALL_PARSERS: list[DependencyParser] = [
     RustParser(),
     RubyParser(),
     DotNetParser(),
-    JavaParser(),
 ]
 
 DEFAULT_PARSERS: list[DependencyParser] = [p for p in ALL_PARSERS if getattr(p, "enabled", True)]

@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from misteye_depscan.models import DetectionResult, ScanReport, ScanStatus
+from misteye_depscan.models import DependencyItem, DetectionResult, ScanReport, ScanStatus
 from misteye_depscan.terminal import (
     BOLD,
     CYAN,
@@ -27,10 +27,10 @@ def render_report(report: ScanReport, *, output_format: str = "table") -> str:
     return render_table(report)
 
 
-def _format_match_detail(match: dict) -> str:
+def _format_match_detail(match: dict, dependency: DependencyItem) -> str:
     parts = [
         f"severity={match.get('severity')}",
-        f"type={match.get('type')}",
+        f"type={dependency.package_type}",
     ]
     ioc = match.get("indicator") or match.get("value")
     if ioc:
@@ -92,7 +92,12 @@ def render_table(report: ScanReport) -> str:
         )
         if result.status == ScanStatus.MALICIOUS and result.matches:
             for match in result.matches[:3]:
-                lines.append(colorize(f"           {_format_match_detail(match)}", RED))
+                lines.append(
+                    colorize(
+                        f"           {_format_match_detail(match, result.dependency)}",
+                        RED,
+                    )
+                )
         elif result.error:
             lines.append(colorize(f"           {result.error}", YELLOW))
     return "\n".join(lines)

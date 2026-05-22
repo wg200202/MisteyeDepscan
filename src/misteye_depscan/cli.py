@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--include-optional",
         action="store_true",
-        help="Include optional ecosystems (Go/Rust/Ruby/.NET/Java).",
+        help="Include optional ecosystems (Go/Rust/Ruby/.NET).",
     )
     scan_parser.add_argument(
         "--quiet",

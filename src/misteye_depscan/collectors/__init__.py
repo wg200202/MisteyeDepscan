@@ -6,7 +6,11 @@ import re
 from pathlib import Path
 
 from misteye_depscan.collectors.base import GlobalCollector, run_command
-from misteye_depscan.collectors.mac_global import NpmGlobalRootCollector, SystemPythonCollector
+from misteye_depscan.collectors.mac_global import (
+    NpmGlobalRootCollector,
+    SystemPythonCollector,
+    collect_node_modules,
+)
 from misteye_depscan.models import DependencyItem, PackageType
 from misteye_depscan.parsers import dedupe_dependencies
 
@@ -167,27 +171,7 @@ class YarnGlobalCollector(GlobalCollector):
 
 
 def _collect_node_modules(root: Path, source: str) -> list[DependencyItem]:
-    items: list[DependencyItem] = []
-    if not root.exists():
-        return items
-    for package_json in root.glob("*/package.json"):
-        try:
-            data = json.loads(package_json.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        name = str(data.get("name") or package_json.parent.name).strip()
-        version = str(data.get("version") or "").strip() or None
-        items.append(
-            DependencyItem(
-                name=name,
-                version=version,
-                package_type=PackageType.NPM.value,
-                source=source,
-                evidence=str(package_json),
-                raw=f"{name}@{version}" if version else name,
-            )
-        )
-    return items
+    return collect_node_modules(root, source)
 
 
 class NvmCollector(GlobalCollector):

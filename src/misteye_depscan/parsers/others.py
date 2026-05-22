@@ -10,9 +10,6 @@ from misteye_depscan.parsers.base import DependencyParser, normalize_name, strip
 GO_REQUIRE = re.compile(r"^\s*(?P<name>[^\s]+)\s+(?P<version>v[^\s]+)")
 RUBY_GEM = re.compile(r'^\s*gem\s+["\']?(?P<name>[^"\']+)["\']?(?:,\s*["\']?(?P<version>[^"\']+)["\']?)?')
 COMPOSER_PKG = re.compile(r'^\s*"(?P<name>[^"]+)"\s*:\s*"(?P<version>[^"]+)"')
-MAVEN_COORD = re.compile(
-    r"<groupId>(?P<group>[^<]+)</groupId>\s*<artifactId>(?P<artifact>[^<]+)</artifactId>\s*<version>(?P<version>[^<]+)</version>"
-)
 CSPROJ_REF = re.compile(
     r'Include="(?P<name>[^"]+)"\s+Version="(?P<version>[^"]+)"'
 )
@@ -263,44 +260,8 @@ class DotNetParser(DependencyParser):
         return items
 
 
-class JavaParser(DependencyParser):
-    enabled = False
-
-    def can_parse(self, path: Path) -> bool:
-        return path.name.lower() in {"pom.xml", "build.gradle", "build.gradle.kts"}
-
-    def parse(self, path: Path) -> list[DependencyItem]:
-        text = path.read_text(encoding="utf-8")
-        items: list[DependencyItem] = []
-        if path.name.lower() == "pom.xml":
-            for match in MAVEN_COORD.finditer(text):
-                name = f"{match.group('group')}:{match.group('artifact')}"
-                items.append(
-                    DependencyItem(
-                        name=name,
-                        version=strip_version_operators(match.group("version")),
-                        package_type=PackageType.PYPI.value,
-                        source=str(path),
-                        evidence="pom.xml dependency",
-                        raw=match.group(0),
-                    )
-                )
-            return items
-
-        gradle_pattern = re.compile(
-            r"(?:implementation|api|compileOnly|runtimeOnly|testImplementation)\s*\(?['\"]([^'\"]+)['\"]:['\"]([^'\"]+)['\"]"
-        )
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            match = gradle_pattern.search(line)
-            if match:
-                items.append(
-                    DependencyItem(
-                        name=normalize_name(match.group(1)),
-                        version=strip_version_operators(match.group(2)),
-                        package_type=PackageType.PYPI.value,
-                        source=str(path),
-                        evidence=f"{path.name}:{line_no}",
-                        raw=line.strip(),
-                    )
-                )
-        return items
+# Java/Maven is intentionally not implemented.
+# MistEye Detect API does not currently expose a `package:maven` type, so
+# scanning Java coordinates would have to be mapped onto an unrelated ecosystem
+# (e.g. PyPI), which produces false positives. Re-introduce a JavaParser only
+# once a dedicated `package:maven` (or similar) type is available.
