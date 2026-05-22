@@ -324,35 +324,13 @@ def collect_global_dependencies(
     *,
     python_only: bool = False,
     node_only: bool = False,
-    include_optional: bool = False,
-    all_envs: bool = False,
 ) -> tuple[list[DependencyItem], list[str]]:
-    if all_envs:
-        collectors = MAC_GLOBAL_COLLECTORS + EXTENDED_ENV_COLLECTORS
-    else:
-        collectors = list(MAC_GLOBAL_COLLECTORS)
+    collectors = list(MAC_GLOBAL_COLLECTORS)
 
     if python_only:
-        collectors = [c for c in collectors if c.name in {"system-python", "pipx", "pyenv", "conda"}]
+        collectors = [c for c in collectors if c.name in {"system-python", "pipx"}]
     elif node_only:
-        collectors = [
-            c
-            for c in collectors
-            if c.name
-            in {
-                "npm-global",
-                "pnpm-global",
-                "yarn-global",
-                "nvm",
-                "fnm",
-                "volta",
-            }
-        ]
-
-    if include_optional:
-        collectors = collectors + [c for c in OPTIONAL_COLLECTORS if getattr(c, "enabled", True)]
-    else:
-        collectors = [c for c in collectors if getattr(c, "enabled", True)]
+        collectors = [c for c in collectors if c.name == "npm-global"]
 
     items: list[DependencyItem] = []
     warnings: list[str] = []

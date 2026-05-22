@@ -8,8 +8,8 @@
 
 - 运行时依赖极少（Python 3.10+；在 3.10 上会自动安装 `tomli` 以解析 `pyproject.toml`）
 - 三个子命令：`scan` / `global` / `check`
-- 支持 Python 与 JS/TS 清单及锁文件；可选 Go / Rust / Ruby / .NET
-- 全局扫描：pip / npm（含 scoped 包 `@scope/pkg`）/ pnpm / nvm / pyenv / conda（部分为可选收集器）
+- 支持 Python 与 JS/TS 清单及锁文件
+- 全局扫描：系统 Python 与 npm -g（含 scoped 包 `@scope/pkg`）
 - 输出格式：终端表格 / JSON / SARIF
 - API 限流（10 次/秒）
 - 扫描过程按包显示进度；可用 `-o` 保存完整报告
@@ -22,10 +22,26 @@ cd MisteyeDepscan
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
+
+# 扫描当前项目
 depscan scan .
+
+# 扫描本机全局已安装包（系统 Python、npm -g）
+depscan global
 ```
 
 在虚拟环境中安装后，激活 venv 即可使用其 `bin` 目录下的 `depscan`（例如 `.venv/bin/depscan`）。
+
+### NVM 与 pnpm 常见路径
+
+若使用 **nvm** 管理 Node，全局包通常不在系统 `npm root -g`，而在各 Node 版本目录下：
+
+| 工具 | 常见根目录 | 已安装 npm 包位置 |
+|------|------------|-------------------|
+| **nvm** | `~/.nvm`（或环境变量 `$NVM_DIR`） | `~/.nvm/versions/node/v<版本>/lib/node_modules/` |
+| **pnpm 全局** | 因安装方式而异 | 运行 `pnpm root -g` 查看；macOS 常见 `~/Library/pnpm`，Linux 常见 `~/.local/share/pnpm` |
+
+- 扫描 nvm 等工具目录请直接指定路径，例如 `depscan scan ~/.nvm --depth 0`（无限深度）。
 
 也可不依赖 `PATH` 中的 `depscan` 命令：
 
@@ -96,9 +112,6 @@ depscan scan /path/to/project
 # - Python：Homebrew /usr/local / 系统 Framework 路径（排除项目 .venv）
 # - npm：全局安装根目录（npm root -g）
 depscan global
-
-# 额外扫描 pyenv / nvm / conda / pnpm-g 等（完整旧行为）
-depscan global --all-envs
 
 # 仅 Python 或仅 Node 全局环境
 depscan global --python-only
@@ -176,19 +189,7 @@ depscan scan . --no-node-modules
 - **PyPI**：`requirements*.txt`、`pyproject.toml`（PEP 621 + Poetry `[tool.poetry]`，含 `group.*.dependencies`）、`Pipfile`、`Pipfile.lock`、`poetry.lock`、`uv.lock`、`setup.py`、`setup.cfg`
 - **npm**：`package.json`、`package-lock.json`、`pnpm-lock.yaml`、`yarn.lock`，以及 `node_modules/**/package.json`
 
-**可选生态（默认关闭）**
-
-- Go：`go.mod`、`go.sum`
-- Rust：`Cargo.toml`、`Cargo.lock`
-- Ruby：`Gemfile`、`Gemfile.lock`
-- .NET：`*.csproj`、`packages.lock.json`
-
 > **暂不支持 Java / Maven**。MistEye Detect API 目前没有 `package:maven` 类型，把 Maven 坐标按其他生态发送会产生误报，所以工具暂不解析 Java 依赖。
-
-```bash
-depscan scan . --include-optional
-depscan global --include-optional
-```
 
 ## API 响应
 
@@ -214,47 +215,6 @@ MistEye Detect API 使用 `status` 字段：
 | 3 | 配置错误（路径无效、缺少 API Key 等） |
 
 展示与调用 API 时：PyPI 使用 `name==version`；npm 等其他生态使用 `name@version`。**跨生态命中会被忽略**——比如扫描的是 PyPI 包，但 API 返回的 match.type 是 `package:npm`（npm 情报库中有同名恶意包），该条命中不会算作威胁，避免「PyPI/npm 同名包」造成的误报。
-
-## CI/CD 示例
-
-GitHub Actions：
-
-```yaml
-name: depscan
-on: [push, pull_request]
-
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e .
-      - run: depscan scan . --json
-        env:
-          MISTEYE_API_KEY: ${{ secrets.MISTEYE_API_KEY }}
-```
-
-## 开发
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
-
-## 架构
-
-```mermaid
-flowchart LR
-    cli[CLI] --> parsers[Parsers]
-    cli --> collectors[GlobalCollectors]
-    parsers --> scanner[Scanner]
-    collectors --> scanner
-    scanner --> api[MistEyeAPI]
-    scanner --> report[Report]
-```
 
 ## 参考链接
 

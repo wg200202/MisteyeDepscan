@@ -8,8 +8,8 @@ A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-doc
 
 - Minimal runtime dependencies (Python 3.10+; `tomli` is installed automatically on 3.10 for `pyproject.toml` parsing)
 - Simple commands: `scan` / `global` / `check`
-- Python and JS/TS manifest and lock files; optional Go / Rust / Ruby / .NET
-- Global scanning for pip / npm (including scoped `@scope/pkg`) / pnpm / nvm / pyenv / conda (optional collectors)
+- Python and JS/TS manifest and lock files
+- Global scanning for system Python and npm -g (including scoped `@scope/pkg`)
 - Output: terminal table / JSON / SARIF
 - API rate limiting (10 req/s)
 - Per-package progress during scans; save full reports with `-o`
@@ -22,10 +22,26 @@ cd MisteyeDepscan
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
+
+# Scan current project
 depscan scan .
+
+# Scan globally installed packages (system Python, npm -g)
+depscan global
 ```
 
 After installing in a virtual environment, `depscan` is available in that environment’s `bin` directory (e.g. `.venv/bin/depscan`) while the venv is activated.
+
+### Typical NVM and pnpm paths
+
+If you use **nvm** for Node, global packages usually live under each Node version, not at the system `npm root -g`:
+
+| Tool | Typical root | Installed npm packages |
+|------|--------------|------------------------|
+| **nvm** | `~/.nvm` (or `$NVM_DIR`) | `~/.nvm/versions/node/v<version>/lib/node_modules/` |
+| **pnpm global** | Varies by install | Run `pnpm root -g`; on macOS often `~/Library/pnpm`, on Linux often `~/.local/share/pnpm` |
+
+- To scan nvm or other tool directories, point at the path directly, e.g. `depscan scan ~/.nvm --depth 0` (unlimited depth).
 
 You can also run without relying on `depscan` on `PATH`:
 
@@ -94,9 +110,6 @@ depscan scan /path/to/project
 # - Python: Homebrew /usr/local / system Framework paths (excludes project .venv)
 # - npm: global install root (npm root -g)
 depscan global
-
-# Also scan pyenv / nvm / conda / pnpm-g (legacy full behavior)
-depscan global --all-envs
 
 # Python or Node global only
 depscan global --python-only
@@ -174,19 +187,7 @@ depscan scan . --no-node-modules
 - **PyPI**: `requirements*.txt`, `pyproject.toml` (PEP 621 + Poetry `[tool.poetry]` including `group.*.dependencies`), `Pipfile`, `Pipfile.lock`, `poetry.lock`, `uv.lock`, `setup.py`, `setup.cfg`
 - **npm**: `package.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, and `node_modules/**/package.json`
 
-**Optional ecosystems (off by default)**
-
-- Go: `go.mod`, `go.sum`
-- Rust: `Cargo.toml`, `Cargo.lock`
-- Ruby: `Gemfile`, `Gemfile.lock`
-- .NET: `*.csproj`, `packages.lock.json`
-
 > **Java / Maven is not supported.** The MistEye Detect API does not yet expose a `package:maven` type, so Java coordinates are intentionally not scanned to avoid false positives.
-
-```bash
-depscan scan . --include-optional
-depscan global --include-optional
-```
 
 ## API response
 
@@ -212,47 +213,6 @@ MistEye Detect API uses `status`:
 | 3 | Configuration error (bad path, missing API key) |
 
 PyPI uses `name==version`; npm and other ecosystems use `name@version` for both display and API requests. Cross-ecosystem matches (e.g. an npm-only threat indicator returned for a PyPI scan) are ignored to avoid false positives caused by same-name packages across ecosystems.
-
-## CI/CD example
-
-GitHub Actions:
-
-```yaml
-name: depscan
-on: [push, pull_request]
-
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e .
-      - run: depscan scan . --json
-        env:
-          MISTEYE_API_KEY: ${{ secrets.MISTEYE_API_KEY }}
-```
-
-## Development
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
-
-## Architecture
-
-```mermaid
-flowchart LR
-    cli[CLI] --> parsers[Parsers]
-    cli --> collectors[GlobalCollectors]
-    parsers --> scanner[Scanner]
-    collectors --> scanner
-    scanner --> api[MistEyeAPI]
-    scanner --> report[Report]
-```
 
 ## References
 

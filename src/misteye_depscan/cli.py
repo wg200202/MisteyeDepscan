@@ -13,7 +13,7 @@ from misteye_depscan.ecosystems import parse_ecosystem_option
 from misteye_depscan.parsers import collect_project_dependencies
 from misteye_depscan.report import render_report
 from misteye_depscan.scanner import DependencyScanner
-from misteye_depscan.terminal import set_color_enabled
+from misteye_depscan.terminal import run_with_progress, set_color_enabled
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -89,16 +89,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--node-only",
         action="store_true",
         help="Scan only Node.js global environments.",
-    )
-    global_parser.add_argument(
-        "--all-envs",
-        action="store_true",
-        help="Also scan pyenv/nvm/conda/pnpm-g/yarn-g/fnm/volta (in addition to system Python and npm -g).",
-    )
-    global_parser.add_argument(
-        "--include-optional",
-        action="store_true",
-        help="Include optional global collectors (Go/Cargo).",
     )
     global_parser.add_argument("--quiet", action="store_true", help="Hide scan progress output.")
     global_parser.add_argument(
@@ -208,17 +198,23 @@ def run_scan(args: argparse.Namespace) -> int:
     depth = getattr(args, "depth", 3)
     max_depth: int | None = None if depth == 0 else depth
 
-    dependencies, collect_warnings, discovered_files = collect_project_dependencies(
-        root,
-        ecosystems=ecosystems,
-        include_optional=args.include_optional,
-        scan_node_modules=not getattr(args, "no_node_modules", False),
-        max_depth=max_depth,
+    def _collect() -> tuple[list[DependencyItem], list[str], list[Path]]:
+        return collect_project_dependencies(
+            root,
+            ecosystems=ecosystems,
+            include_optional=args.include_optional,
+            scan_node_modules=not getattr(args, "no_node_modules", False),
+            max_depth=max_depth,
+        )
+
+    dependencies, collect_warnings, discovered_files = run_with_progress(
+        _collect,
+        message=f"Scanning {root} ...",
     )
-    if not args.quiet:
-        eco_text = ", ".join(sorted(ecosystems))
-        print(f"Ecosystems: {eco_text}", file=sys.stderr)
-        _print_discovered_files(root, discovered_files)
+    eco_text = ", ".join(sorted(ecosystems))
+    print(f"Ecosystems: {eco_text}", file=sys.stderr)
+    _print_discovered_files(root, discovered_files)
+    print(f"Dependencies to check: {len(dependencies)}", file=sys.stderr)
     return _run_detection(
         dependencies,
         output_json=args.json,
@@ -230,14 +226,21 @@ def run_scan(args: argparse.Namespace) -> int:
 
 
 def run_global(args: argparse.Namespace) -> int:
-    dependencies, warnings = collect_global_dependencies(
-        python_only=args.python_only,
-        node_only=args.node_only,
-        include_optional=args.include_optional,
-        all_envs=args.all_envs,
+    dependencies, warnings = run_with_progress(
+        lambda: collect_global_dependencies(
+            python_only=args.python_only,
+            node_only=args.node_only,
+        ),
+        message="Scanning global environments ...",
     )
     if not dependencies:
         warnings.append("No global packages were discovered.")
+    else:
+        sources = sorted({d.source for d in dependencies})
+        print("Scan sources:", file=sys.stderr)
+        for src in sources:
+            print(f"  {src}", file=sys.stderr)
+    print(f"Dependencies to check: {len(dependencies)}", file=sys.stderr)
     return _run_detection(
         dependencies,
         output_json=args.json,

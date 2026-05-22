@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 import sys
+import threading
+from typing import Callable, TextIO, TypeVar
 
 from misteye_depscan.models import ScanStatus
+
+T = TypeVar("T")
 
 RESET = "\033[0m"
 RED = "\033[31m"
@@ -95,3 +100,50 @@ def hyperlink(url: str, text: str) -> str:
     if not use_color():
         return text
     return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+
+class IndeterminateProgress:
+    """Animated spinner on stderr while a long-running task runs (always on)."""
+
+    _FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+    def __init__(
+        self,
+        message: str = "Scanning...",
+        *,
+        stream: TextIO | None = None,
+    ) -> None:
+        self.message = message
+        self._stream = stream or sys.stderr
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> IndeterminateProgress:
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._stream.write("\r\033[K\n")
+        self._stream.flush()
+
+    def _spin(self) -> None:
+        for frame in itertools.cycle(self._FRAMES):
+            if self._stop.is_set():
+                break
+            prefix = colorize(frame, CYAN) if use_color() else frame
+            self._stream.write(f"\r{prefix} {self.message}")
+            self._stream.flush()
+            self._stop.wait(0.12)
+
+
+def run_with_progress(
+    fn: Callable[[], T],
+    message: str = "Scanning...",
+) -> T:
+    """Run *fn* with a spinner on stderr (always shown during dependency collection)."""
+    with IndeterminateProgress(message):
+        return fn()
