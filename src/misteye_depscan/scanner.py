@@ -42,7 +42,16 @@ class DependencyScanner:
             }
             try:
                 for future in as_completed(futures):
-                    result = future.result()
+                    dependency = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        result = DetectionResult(
+                            dependency=dependency,
+                            api_status=None,
+                            status=ScanStatus.ERROR,
+                            error=str(exc),
+                        )
                     results.append(result)
                     completed += 1
                     if self.show_progress:

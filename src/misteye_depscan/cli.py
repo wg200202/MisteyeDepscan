@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from misteye_depscan import __version__
+from misteye_depscan.banner import print_banner
 from misteye_depscan.api import MistEyeClient
 from misteye_depscan.collectors import collect_global_dependencies
 from misteye_depscan.config import ensure_api_key, load_api_key, prompt_and_save_api_key
@@ -314,6 +315,9 @@ def _main_inner(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     set_color_enabled(not args.no_color)
+
+    if args.command in {"scan", "global", "check"}:
+        print_banner()
 
     if args.command == "scan":
         return run_scan(args)

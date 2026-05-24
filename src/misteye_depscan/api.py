@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 DETECT_URL = "https://app-api.misteye.io/functions/v1/detect"
 MISTEYE_WEB_BASE = "https://app.misteye.io/home"
@@ -79,7 +83,7 @@ class MistEyeClient:
         api_key: str,
         *,
         rate_limit: float = DEFAULT_RATE_LIMIT,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
         max_retries: int = 3,
     ) -> None:
         self.api_key = api_key
@@ -116,10 +120,35 @@ class MistEyeClient:
                 raise MistEyeAPIError(self._format_http_error(exc), status_code=exc.code) from exc
             except urllib.error.URLError as exc:
                 last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(min(2**attempt, 8))
+                if attempt < self.max_retries and _is_retryable_url_error(exc):
+                    delay = min(2**attempt, 8)
+                    logger.warning(
+                        "MistEye API network error for %s (attempt %s/%s): %s; retry in %ss",
+                        target,
+                        attempt + 1,
+                        self.max_retries + 1,
+                        exc.reason,
+                        delay,
+                    )
+                    time.sleep(delay)
                     continue
                 raise MistEyeAPIError(f"Network error: {exc.reason}") from exc
+            except (TimeoutError, socket.timeout) as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    delay = min(2**attempt, 8)
+                    logger.warning(
+                        "MistEye API timeout for %s (attempt %s/%s); retry in %ss",
+                        target,
+                        attempt + 1,
+                        self.max_retries + 1,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise MistEyeAPIError(
+                    f"Request timed out after {self.timeout}s: {target}"
+                ) from exc
             except json.JSONDecodeError as exc:
                 raise MistEyeAPIError("Invalid JSON response from MistEye API.") from exc
 
@@ -135,3 +164,12 @@ class MistEyeClient:
 
     def test_connection(self) -> dict[str, Any]:
         return self.detect("example.com", "domain")
+
+
+def _is_retryable_url_error(exc: urllib.error.URLError) -> bool:
+    reason = exc.reason
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return True
+    if isinstance(reason, OSError) and reason.errno is not None:
+        return reason.errno in {110, 60}  # ETIMEDOUT, ECONNRESET (platform-dependent)
+    return True
