@@ -10,6 +10,7 @@ from misteye_depscan.collectors.mac_global import (
     NpmGlobalRootCollector,
     SystemPythonCollector,
     collect_node_modules,
+    discover_pnpm_global_roots,
 )
 from misteye_depscan.models import DependencyItem, PackageType
 from misteye_depscan.parsers import dedupe_dependencies
@@ -118,21 +119,34 @@ class PnpmGlobalCollector(GlobalCollector):
     name = "pnpm-global"
 
     def collect(self) -> list[DependencyItem]:
+        items: list[DependencyItem] = []
+        seen: set[tuple[str, str | None]] = set()
+        for root in discover_pnpm_global_roots():
+            for item in _collect_node_modules(root, source="pnpm-global"):
+                key = (item.name.lower(), item.version)
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(item)
+
         result = run_command(["pnpm", "list", "-g", "--json", "--depth=0"])
         if result is None or result.returncode != 0:
-            return []
+            return items
         try:
             data = json.loads(result.stdout or "[]")
         except json.JSONDecodeError:
-            return []
+            return items
         if isinstance(data, dict):
             data = [data]
-        items: list[DependencyItem] = []
         for entry in data:
             for name, meta in (entry.get("dependencies") or {}).items():
                 version = None
                 if isinstance(meta, dict):
                     version = str(meta.get("version") or "").strip() or None
+                key = (name.lower(), version)
+                if key in seen:
+                    continue
+                seen.add(key)
                 items.append(
                     DependencyItem(
                         name=name,
@@ -296,22 +310,30 @@ class CargoGlobalCollector(GlobalCollector):
         return items
 
 
-# Default: macOS system / Homebrew Python + npm -g (not project .venv, not all nvm versions)
-MAC_GLOBAL_COLLECTORS: list[GlobalCollector] = [
+PYTHON_GLOBAL_COLLECTOR_NAMES = frozenset({"system-python", "pipx"})
+NODE_GLOBAL_COLLECTOR_NAMES = frozenset(
+    {"npm-global", "pnpm-global", "yarn-global", "nvm", "fnm", "volta"}
+)
+
+# Default: macOS system Python + all common Node global install locations.
+DEFAULT_GLOBAL_COLLECTORS: list[GlobalCollector] = [
     SystemPythonCollector(),
     PipxCollector(),
     NpmGlobalRootCollector(),
-]
-
-# Optional: pyenv / nvm / conda / pnpm-g / yarn-g / fnm / volta
-EXTENDED_ENV_COLLECTORS: list[GlobalCollector] = [
-    PyenvCollector(),
-    CondaCollector(),
     PnpmGlobalCollector(),
     YarnGlobalCollector(),
     NvmCollector(),
     FnmCollector(),
     VoltaCollector(),
+]
+
+# Backward-compatible alias
+MAC_GLOBAL_COLLECTORS = DEFAULT_GLOBAL_COLLECTORS
+
+# Optional: pyenv / conda (many duplicate packages; not enabled by default)
+EXTENDED_ENV_COLLECTORS: list[GlobalCollector] = [
+    PyenvCollector(),
+    CondaCollector(),
 ]
 
 OPTIONAL_COLLECTORS: list[GlobalCollector] = [
@@ -325,12 +347,12 @@ def collect_global_dependencies(
     python_only: bool = False,
     node_only: bool = False,
 ) -> tuple[list[DependencyItem], list[str]]:
-    collectors = list(MAC_GLOBAL_COLLECTORS)
+    collectors = list(DEFAULT_GLOBAL_COLLECTORS)
 
     if python_only:
-        collectors = [c for c in collectors if c.name in {"system-python", "pipx"}]
+        collectors = [c for c in collectors if c.name in PYTHON_GLOBAL_COLLECTOR_NAMES]
     elif node_only:
-        collectors = [c for c in collectors if c.name == "npm-global"]
+        collectors = [c for c in collectors if c.name in NODE_GLOBAL_COLLECTOR_NAMES]
 
     items: list[DependencyItem] = []
     warnings: list[str] = []

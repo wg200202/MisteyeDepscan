@@ -9,7 +9,7 @@
 - 运行时依赖极少（Python 3.10+；在 3.10 上会自动安装 `tomli` 以解析 `pyproject.toml`）
 - 三个子命令：`scan` / `global` / `check`
 - 支持 Python 与 JS/TS 清单及锁文件
-- 全局扫描：系统 Python 与 npm -g（含 scoped 包 `@scope/pkg`）
+- 全局扫描：系统 Python 与 Node 全局（npm -g、pnpm -g、yarn global、nvm/fnm/volta；含 scoped 包 `@scope/pkg`）
 - 输出格式：终端表格 / JSON / SARIF
 - API 限流（10 次/秒）
 - 扫描过程按包显示进度；可用 `-o` 保存完整报告
@@ -26,7 +26,7 @@ pip install -e .
 # 扫描当前项目
 depscan scan .
 
-# 扫描本机全局已安装包（系统 Python、npm -g）
+# 扫描本机全局已安装包（系统 Python、Node 全局）
 depscan global
 ```
 
@@ -34,14 +34,14 @@ depscan global
 
 ### NVM 与 pnpm 常见路径
 
-若使用 **nvm** 管理 Node，全局包通常不在系统 `npm root -g`，而在各 Node 版本目录下：
+`depscan global` 会扫描 **npm -g**、**pnpm -g**、**yarn global**，以及 **nvm / fnm / volta** 各版本目录下的全局包（不仅限于当前激活的 `npm root -g`）。
 
 | 工具 | 常见根目录 | 已安装 npm 包位置 |
 |------|------------|-------------------|
 | **nvm** | `~/.nvm`（或环境变量 `$NVM_DIR`） | `~/.nvm/versions/node/v<版本>/lib/node_modules/` |
 | **pnpm 全局** | 因安装方式而异 | 运行 `pnpm root -g` 查看；macOS 常见 `~/Library/pnpm`，Linux 常见 `~/.local/share/pnpm` |
 
-- 扫描 nvm 等工具目录请直接指定路径，例如 `depscan scan ~/.nvm --depth 0`（无限深度）。
+- 自定义目录树可用 `depscan scan <路径> --depth 0`。
 
 也可不依赖 `PATH` 中的 `depscan` 命令：
 
@@ -110,7 +110,7 @@ depscan scan /path/to/project
 
 # 扫描 Mac 系统级全局环境（默认）
 # - Python：Homebrew /usr/local / 系统 Framework 路径（排除项目 .venv）
-# - npm：全局安装根目录（npm root -g）
+# - Node：npm -g、pnpm -g、yarn global、nvm/fnm/volta 各版本下的全局包
 depscan global
 
 # 仅 Python 或仅 Node 全局环境

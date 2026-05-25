@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from misteye_depscan.collectors.base import GlobalCollector, run_command
 from misteye_depscan.models import DependencyItem, PackageType
 
+logger = logging.getLogger(__name__)
+
 _VENV_MARKERS = (".venv", "venv", "virtualenv", "/envs/", "/node_modules/")
+
+# System-wide npm globals (independent of nvm/fnm on PATH).
+STANDARD_NPM_GLOBAL_DIRS = (
+    Path("/usr/local/lib/node_modules"),
+    Path("/opt/homebrew/lib/node_modules"),
+)
+
+# Common pnpm global store bases when ``pnpm`` is not on PATH.
+STANDARD_PNPM_GLOBAL_BASES = (
+    Path.home() / "Library" / "pnpm",
+    Path.home() / ".local" / "share" / "pnpm",
+)
 
 
 def _is_venv_python(python: Path) -> bool:
@@ -119,6 +134,60 @@ def _npm_global_root() -> Path | None:
     return root if root.exists() else None
 
 
+def _pnpm_global_root() -> Path | None:
+    result = run_command(["pnpm", "root", "-g"])
+    if result is None or result.returncode != 0:
+        return None
+    root = Path(result.stdout.strip())
+    return root if root.exists() else None
+
+
+def _add_unique_root(roots: list[Path], seen: set[str], path: Path) -> None:
+    if not path.exists() or not path.is_dir():
+        return
+    key = str(path.resolve())
+    if key in seen:
+        return
+    seen.add(key)
+    roots.append(path)
+
+
+def discover_npm_global_roots() -> list[Path]:
+    """All npm global ``node_modules`` dirs (active prefix + common system paths)."""
+    roots: list[Path] = []
+    seen: set[str] = set()
+    via_cmd = _npm_global_root()
+    if via_cmd:
+        _add_unique_root(roots, seen, via_cmd)
+    for candidate in STANDARD_NPM_GLOBAL_DIRS:
+        _add_unique_root(roots, seen, candidate)
+    return roots
+
+
+def discover_pnpm_global_roots() -> list[Path]:
+    """pnpm global ``node_modules`` dirs (CLI prefix + standard store locations)."""
+    roots: list[Path] = []
+    seen: set[str] = set()
+    via_cmd = _pnpm_global_root()
+    if via_cmd:
+        _add_unique_root(roots, seen, via_cmd)
+    for base in STANDARD_PNPM_GLOBAL_BASES:
+        if not base.exists():
+            continue
+        global_dir = base / "global"
+        if not global_dir.is_dir():
+            continue
+        try:
+            for store in global_dir.iterdir():
+                if not store.is_dir():
+                    continue
+                nm = store / "node_modules"
+                _add_unique_root(roots, seen, nm)
+        except OSError as exc:
+            logger.warning("Failed to read pnpm global dir %s: %s", global_dir, exc)
+    return roots
+
+
 def collect_node_modules(root: Path, source: str) -> list[DependencyItem]:
     """Recursively collect installed npm packages under ``root``.
 
@@ -177,8 +246,7 @@ class NpmGlobalRootCollector(GlobalCollector):
 
     def collect(self) -> list[DependencyItem]:
         items: list[DependencyItem] = []
-        root = _npm_global_root()
-        if root:
+        for root in discover_npm_global_roots():
             items.extend(_collect_node_modules(root, source="npm-global"))
 
         result = run_command(["npm", "list", "-g", "--json", "--depth=0"])

@@ -9,7 +9,7 @@ A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-doc
 - Minimal runtime dependencies (Python 3.10+; `tomli` is installed automatically on 3.10 for `pyproject.toml` parsing)
 - Simple commands: `scan` / `global` / `check`
 - Python and JS/TS manifest and lock files
-- Global scanning for system Python and npm -g (including scoped `@scope/pkg`)
+- Global scanning for system Python and Node globals (npm -g, pnpm -g, yarn global, nvm/fnm/volta; including scoped `@scope/pkg`)
 - Output: terminal table / JSON / SARIF
 - API rate limiting (10 req/s)
 - Per-package progress during scans; save full reports with `-o`
@@ -26,7 +26,7 @@ pip install -e .
 # Scan current project
 depscan scan .
 
-# Scan globally installed packages (system Python, npm -g)
+# Scan globally installed packages (system Python, Node globals)
 depscan global
 ```
 
@@ -34,14 +34,14 @@ After installing in a virtual environment, `depscan` is available in that enviro
 
 ### Typical NVM and pnpm paths
 
-If you use **nvm** for Node, global packages usually live under each Node version, not at the system `npm root -g`:
+`depscan global` scans **npm -g**, **pnpm -g**, **yarn global**, and packages under **nvm / fnm / volta** version directories (not only the active `npm root -g`).
 
 | Tool | Typical root | Installed npm packages |
 |------|--------------|------------------------|
 | **nvm** | `~/.nvm` (or `$NVM_DIR`) | `~/.nvm/versions/node/v<version>/lib/node_modules/` |
 | **pnpm global** | Varies by install | Run `pnpm root -g`; on macOS often `~/Library/pnpm`, on Linux often `~/.local/share/pnpm` |
 
-- To scan nvm or other tool directories, point at the path directly, e.g. `depscan scan ~/.nvm --depth 0` (unlimited depth).
+- For a custom directory tree, use `depscan scan <path> --depth 0`.
 
 You can also run without relying on `depscan` on `PATH`:
 
@@ -108,7 +108,7 @@ depscan scan /path/to/project
 
 # Scan Mac system-level global environments (default)
 # - Python: Homebrew /usr/local / system Framework paths (excludes project .venv)
-# - npm: global install root (npm root -g)
+# - Node: npm -g, pnpm -g, yarn global, nvm/fnm/volta per-version globals
 depscan global
 
 # Python or Node global only
