@@ -5,6 +5,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from misteye_depscan.api import build_search_url
+from misteye_depscan.intel import (
+    display_severity,
+    parse_expired_at,
+    parse_first_seen,
+    parse_last_seen,
+    stale_intel_hint,
+)
 from misteye_depscan.models import DependencyItem, DetectionResult, ScanReport, ScanStatus
 from misteye_depscan.terminal import (
     BOLD,
@@ -31,9 +38,18 @@ def render_report(report: ScanReport, *, output_format: str = "table") -> str:
 
 def _format_match_detail(match: dict, dependency: DependencyItem) -> str:
     parts = [
-        f"severity={match.get('severity')}",
+        f"severity={display_severity(match)}",
         f"type={dependency.package_type}",
     ]
+    first_seen = parse_first_seen(match)
+    if first_seen is not None:
+        parts.append(f"first_seen={first_seen.date().isoformat()}")
+    last_seen = parse_last_seen(match)
+    if last_seen is not None:
+        parts.append(f"last_seen={last_seen.date().isoformat()}")
+    expired = parse_expired_at(match)
+    if expired is not None:
+        parts.append(f"expired_at={expired.date().isoformat()}")
     ioc = match.get("indicator") or match.get("value")
     if ioc:
         parts.append(f"indicator={ioc}")
@@ -98,6 +114,9 @@ def render_table(report: ScanReport) -> str:
                         RED,
                     )
                 )
+                hint = stale_intel_hint(match)
+                if hint:
+                    lines.append(colorize(f"           {hint}", YELLOW))
             lines.append(colorize(f"           Source: {result.dependency.source}", DIM))
             url = build_search_url(result.dependency.api_target, result.dependency.package_type)
             lines.append(colorize(f"           Detail: ", DIM) + hyperlink(url, url))
@@ -136,7 +155,7 @@ def _result_to_dict(result: DetectionResult) -> dict:
         "source": result.dependency.source,
         "evidence": result.dependency.evidence,
         "raw": result.dependency.raw,
-        "matches": result.matches,
+        "matches": [_match_to_dict(m) for m in result.matches],
         "error": result.error,
     }
     if result.status == ScanStatus.MALICIOUS:
@@ -144,6 +163,23 @@ def _result_to_dict(result: DetectionResult) -> dict:
             result.dependency.api_target, result.dependency.package_type
         )
     return d
+
+
+def _match_to_dict(match: dict) -> dict:
+    enriched = dict(match)
+    enriched["display_severity"] = display_severity(match)
+    hint = stale_intel_hint(match)
+    if hint:
+        enriched["stale_intel_hint"] = hint
+    first_seen = parse_first_seen(match)
+    if first_seen is not None:
+        enriched["first_seen"] = first_seen.isoformat()
+    expired = parse_expired_at(match)
+    if expired is not None:
+        enriched["expired_at"] = expired.isoformat()
+    if match.get("is_expired") is True:
+        enriched["is_expired"] = True
+    return enriched
 
 
 def render_sarif(report: ScanReport) -> str:

@@ -10,8 +10,9 @@ from misteye_depscan.api import (
     build_search_url,
     parse_detect_response,
 )
+from misteye_depscan.intel import display_severity, stale_intel_hint
 from misteye_depscan.models import DependencyItem, DetectionResult, ScanReport, ScanStatus
-from misteye_depscan.terminal import DIM, colorize, format_progress_result, hyperlink
+from misteye_depscan.terminal import DIM, YELLOW, colorize, format_progress_result, hyperlink
 
 
 class DependencyScanner:
@@ -90,13 +91,18 @@ class DependencyScanner:
         dep = result.dependency
         target = dep.target
         severity = None
+        stale_hint = None
         if result.status == ScanStatus.MALICIOUS and result.matches:
-            severity = str(result.matches[0].get("severity") or "")
+            primary = result.matches[0]
+            severity = display_severity(primary)
+            stale_hint = stale_intel_hint(primary)
         detail = format_progress_result(
             result.status,
             severity=severity or None,
             error=result.error,
         )
+        if stale_hint:
+            detail += colorize(f" · {stale_hint}", YELLOW)
         prefix = colorize(f"[{completed}/{total}]", DIM)
         line = f"{prefix} {target} → {detail}"
         if result.status == ScanStatus.MALICIOUS:
