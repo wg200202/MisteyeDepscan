@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Scan only Node.js global environments.",
     )
+    global_parser.add_argument(
+        "--rust-only",
+        action="store_true",
+        help="Scan only Rust cargo install globals.",
+    )
     global_parser.add_argument("--quiet", action="store_true", help="Hide scan progress output.")
     global_parser.add_argument(
         "-o",
@@ -151,12 +156,32 @@ def _print_discovered_files(root: Path, files: list[Path]) -> None:
         (nm_files if "node_modules" in f.parts else manifest_files).append(f)
 
     print(f"Discovered {len(files)} dependency file(s):", file=sys.stderr)
+    by_kind: dict[str, list[Path]] = defaultdict(list)
     for f in manifest_files:
-        try:
-            rel = f.relative_to(root)
-        except ValueError:
-            rel = f
-        print(f"  {rel}", file=sys.stderr)
+        name = f.name.lower()
+        if name in {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"}:
+            by_kind["npm"].append(f)
+        elif name in {"cargo.toml", "cargo.lock"}:
+            by_kind["rust"].append(f)
+        elif name.startswith("requirements") or name in {
+            "pyproject.toml",
+            "pipfile",
+            "pipfile.lock",
+            "poetry.lock",
+            "uv.lock",
+            "setup.py",
+            "setup.cfg",
+        }:
+            by_kind["pypi"].append(f)
+        else:
+            by_kind["other"].append(f)
+    for kind in ("npm", "rust", "pypi", "other"):
+        for f in by_kind.get(kind, []):
+            try:
+                rel = f.relative_to(root)
+            except ValueError:
+                rel = f
+            print(f"  [{kind}] {rel}", file=sys.stderr)
 
     if nm_files:
         groups: dict[Path, int] = defaultdict(int)
@@ -190,14 +215,21 @@ def run_scan(args: argparse.Namespace) -> int:
         print(f"Path not found: {root}", file=sys.stderr)
         return 3
 
+    depth = args.depth
+    max_depth: int | None = None if depth == 0 else depth
+
     try:
-        ecosystems = parse_ecosystem_option(getattr(args, "ecosystem", None), root)
+        ecosystems = parse_ecosystem_option(
+            getattr(args, "ecosystem", None),
+            root,
+            max_depth=max_depth,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 3
 
-    depth = getattr(args, "depth", 3)
-    max_depth: int | None = None if depth == 0 else depth
+    depth_label = "unlimited" if depth == 0 else str(depth)
+    print(f"Scan depth: {depth_label} (recursive manifest discovery)", file=sys.stderr)
 
     def _collect() -> tuple[list[DependencyItem], list[str], list[Path]]:
         return collect_project_dependencies(
@@ -215,6 +247,19 @@ def run_scan(args: argparse.Namespace) -> int:
     eco_text = ", ".join(sorted(ecosystems))
     print(f"Ecosystems: {eco_text}", file=sys.stderr)
     _print_discovered_files(root, discovered_files)
+    if dependencies:
+        from collections import Counter
+
+        by_type = Counter(d.package_type for d in dependencies)
+        parts = []
+        if by_type.get("package:npm"):
+            parts.append(f"npm={by_type['package:npm']}")
+        if by_type.get("package:cratesio"):
+            parts.append(f"rust={by_type['package:cratesio']}")
+        if by_type.get("package:pypi"):
+            parts.append(f"pypi={by_type['package:pypi']}")
+        if parts:
+            print(f"Collected dependencies: {', '.join(parts)}", file=sys.stderr)
     print(f"Dependencies to check: {len(dependencies)}", file=sys.stderr)
     return _run_detection(
         dependencies,
@@ -231,6 +276,7 @@ def run_global(args: argparse.Namespace) -> int:
         lambda: collect_global_dependencies(
             python_only=args.python_only,
             node_only=args.node_only,
+            rust_only=args.rust_only,
         ),
         message="Scanning global environments ...",
     )

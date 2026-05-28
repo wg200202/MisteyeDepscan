@@ -52,6 +52,32 @@ def parse_dependency_file(path: Path, *, include_optional: bool = False) -> list
     return parser.parse(path)
 
 
+def _filter_rust_workspace_manifests(root: Path, manifest_files: list[Path]) -> list[Path]:
+    """Prefer each workspace ``Cargo.lock`` over member ``Cargo.toml`` files; keep npm/pypi."""
+    non_rust = [
+        path
+        for path in manifest_files
+        if path.name.lower() not in {"cargo.toml", "cargo.lock"}
+    ]
+    rust_files = [
+        path
+        for path in manifest_files
+        if path.name.lower() in {"cargo.toml", "cargo.lock"}
+    ]
+    if not rust_files:
+        return manifest_files
+
+    locks = sorted({path.resolve() for path in rust_files if path.name.lower() == "cargo.lock"})
+    if locks:
+        return non_rust + [Path(path) for path in locks]
+
+    root_lock = (root.resolve() / "Cargo.lock")
+    if root_lock.is_file():
+        return non_rust + [root_lock]
+
+    return non_rust + rust_files
+
+
 def _parse_manifest_path(path: Path, *, include_optional: bool) -> list[DependencyItem]:
     if path.name.lower() == "package.json" and "node_modules" in path.parts:
         return _NPM_PARSER.parse(path)
@@ -97,6 +123,8 @@ def collect_project_dependencies(
     manifest_files = find_manifest_files(
         root, ecosystems=ecosystems, include_optional=include_optional, max_depth=max_depth
     )
+    if "rust" in ecosystems:
+        manifest_files = _filter_rust_workspace_manifests(root, manifest_files)
     discovered_files.extend(manifest_files)
     for file_path in manifest_files:
         items.extend(_parse_manifest_path(file_path, include_optional=include_optional))

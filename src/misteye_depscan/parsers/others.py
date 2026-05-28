@@ -85,7 +85,7 @@ class GoParser(DependencyParser):
 
 
 class RustParser(DependencyParser):
-    enabled = False
+    ecosystem = "rust"
 
     def can_parse(self, path: Path) -> bool:
         return path.name.lower() in {"cargo.toml", "cargo.lock"}

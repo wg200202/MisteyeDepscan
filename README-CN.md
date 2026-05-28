@@ -9,7 +9,7 @@
 - 运行时依赖极少（Python 3.10+；在 3.10 上会自动安装 `tomli` 以解析 `pyproject.toml`）
 - 三个子命令：`scan` / `global` / `check`
 - 支持 Python 与 JS/TS 清单及锁文件
-- 全局扫描：系统 Python 与 Node 全局（npm -g、pnpm -g、yarn global、nvm/fnm/volta；含 scoped 包 `@scope/pkg`）
+- 全局扫描：系统 Python、Node 全局（npm -g、pnpm -g、yarn global、nvm/fnm/volta）、Rust `cargo install`（`cargo install --list` + 各包的 `Cargo.lock`）
 - 输出格式：终端表格 / JSON / SARIF
 - API 限流（10 次/秒）
 - 扫描过程按包显示进度；可用 `-o` 保存完整报告
@@ -113,9 +113,10 @@ depscan scan /path/to/project
 # - Node：npm -g、pnpm -g、yarn global、nvm/fnm/volta 各版本下的全局包
 depscan global
 
-# 仅 Python 或仅 Node 全局环境
+# 仅 Python / Node / Rust 全局环境
 depscan global --python-only
 depscan global --node-only
+depscan global --rust-only
 
 # 检查单个包
 depscan check requests==2.32.3 --pypi

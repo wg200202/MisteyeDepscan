@@ -13,8 +13,6 @@ DEFAULT_MAX_DEPTH = 10
 OPTIONAL_MANIFEST_NAMES = {
     "go.mod",
     "go.sum",
-    "cargo.toml",
-    "cargo.lock",
     "gemfile",
     "gemfile.lock",
     "composer.json",
@@ -112,7 +110,7 @@ def _path_skipped_for_manifests(path: Path) -> bool:
 
 
 def _matches_ecosystem_filename(path: Path, ecosystem: str) -> bool:
-    from misteye_depscan.ecosystems import NPM_MARKERS, PYPI_MARKERS
+    from misteye_depscan.ecosystems import NPM_MARKERS, PYPI_MARKERS, RUST_MARKERS
 
     name = path.name.lower()
     if ecosystem == "npm":
@@ -121,6 +119,8 @@ def _matches_ecosystem_filename(path: Path, ecosystem: str) -> bool:
         if name in PYPI_MARKERS:
             return True
         return name.startswith("requirements") and name.endswith(".txt")
+    if ecosystem == "rust":
+        return name in RUST_MARKERS
     return False
 
 
@@ -173,6 +173,7 @@ def find_manifest_files(
         elif not (
             _matches_ecosystem_filename(path, "npm")
             or _matches_ecosystem_filename(path, "pypi")
+            or _matches_ecosystem_filename(path, "rust")
             or (include_optional and name in OPTIONAL_MANIFEST_NAMES)
         ):
             continue
