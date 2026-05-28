@@ -8,8 +8,8 @@ A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-doc
 
 - Minimal runtime dependencies (Python 3.10+; `tomli` is installed automatically on 3.10 for `pyproject.toml` parsing)
 - Simple commands: `scan` / `global` / `check`
-- Python and JS/TS manifest and lock files
-- Global scanning for system Python and Node globals (npm -g, pnpm -g, yarn global, nvm/fnm/volta; including scoped `@scope/pkg`)
+- Multi-ecosystem manifest and lock parsing: npm, PyPI, Rust, Go, RubyGems
+- Global scanning for system Python, Node globals (npm/pnpm/yarn/nvm), Rust `cargo install`, and Go `go install` binaries
 - Output: terminal table / JSON / SARIF
 - API rate limiting (10 req/s)
 - Per-package progress during scans; save full reports with `-o`
@@ -156,12 +156,15 @@ Quiet mode: `--quiet`. Disable colors: `depscan --no-color scan .` or `NO_COLOR=
 
 ## Ecosystems (auto-detect)
 
-Aligned with MistEye: **npm** and **PyPI** auto-detect and scan.
+Aligned with MistEye: **npm**, **PyPI**, **Rust**, **Go**, and **RubyGems** auto-detect and scan.
 
 | Ecosystem | Marker files | Status |
 |-----------|--------------|--------|
 | **npm** | `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` | Supported |
 | **PyPI** | `pyproject.toml`, `requirements*.txt`, `Pipfile`, `Pipfile.lock`, `poetry.lock`, `uv.lock`, `setup.py`, `setup.cfg` | Supported |
+| **Rust** | `Cargo.toml`, `Cargo.lock` (workspace prefers root `Cargo.lock`) | Supported |
+| **Go** | `go.mod`, `go.sum` (prefer `go.sum` when present) | Supported |
+| **RubyGems** | `Gemfile`, `Gemfile.lock` | Supported |
 
 **Auto-detect rules**
 
@@ -173,8 +176,11 @@ Aligned with MistEye: **npm** and **PyPI** auto-detect and scan.
 ```bash
 depscan scan . --ecosystem=npm
 depscan scan . --ecosystem=pypi
+depscan scan . --ecosystem=rust
+depscan scan . --ecosystem=go
+depscan scan . --ecosystem=rubygems
 depscan scan . --ecosystem=all
-depscan scan . --ecosystem=npm,pypi   # default when omitted = auto-detect
+depscan scan . --ecosystem=npm,pypi,rust,go,rubygems   # default when omitted = auto-detect
 
 # Manifest/lock only (skip node_modules installed tree)
 depscan scan . --no-node-modules
@@ -182,10 +188,13 @@ depscan scan . --no-node-modules
 
 ## Supported dependency files
 
-**Default (npm + PyPI)**
+**Default (auto-detect npm / PyPI / Rust / Go / RubyGems)**
 
 - **PyPI**: `requirements*.txt`, `pyproject.toml` (PEP 621 + Poetry `[tool.poetry]` including `group.*.dependencies`), `Pipfile`, `Pipfile.lock`, `poetry.lock`, `uv.lock`, `setup.py`, `setup.cfg`
 - **npm**: `package.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, and `node_modules/**/package.json`
+- **Rust**: `Cargo.lock` (preferred in workspaces; falls back to `Cargo.toml` when needed)
+- **Go**: `go.sum` (preferred over same-module `go.mod`)
+- **RubyGems**: `Gemfile` and `Gemfile.lock`
 
 > **Java / Maven is not supported.** The MistEye Detect API does not yet expose a `package:maven` type, so Java coordinates are intentionally not scanned to avoid false positives.
 

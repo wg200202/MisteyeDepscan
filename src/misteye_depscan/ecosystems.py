@@ -23,6 +23,20 @@ RUST_MARKERS = frozenset(
     }
 )
 
+GO_MARKERS = frozenset(
+    {
+        "go.mod",
+        "go.sum",
+    }
+)
+
+RUBYGEMS_MARKERS = frozenset(
+    {
+        "gemfile",
+        "gemfile.lock",
+    }
+)
+
 PYPI_MARKERS = frozenset(
     {
         "pyproject.toml",
@@ -59,7 +73,7 @@ MANIFEST_SKIP_DIR_NAMES = frozenset(
     }
 )
 
-SUPPORTED_ECOSYSTEMS = frozenset({"npm", "pypi", "rust"})
+SUPPORTED_ECOSYSTEMS = frozenset({"npm", "pypi", "rust", "go", "rubygems"})
 
 
 def _path_skipped_for_manifests(path: Path) -> bool:
@@ -79,6 +93,14 @@ def _is_npm_marker(path: Path) -> bool:
 
 def _is_rust_marker(path: Path) -> bool:
     return path.name.lower() in RUST_MARKERS
+
+
+def _is_go_marker(path: Path) -> bool:
+    return path.name.lower() in GO_MARKERS
+
+
+def _is_rubygems_marker(path: Path) -> bool:
+    return path.name.lower() in RUBYGEMS_MARKERS
 
 
 def _walk_files_with_depth(root: Path, max_depth: int | None) -> list[Path]:
@@ -111,6 +133,10 @@ def detect_ecosystems(root: Path, *, max_depth: int | None = DEFAULT_SCAN_DEPTH)
             found.add("pypi")
         if _is_rust_marker(root):
             found.add("rust")
+        if _is_go_marker(root):
+            found.add("go")
+        if _is_rubygems_marker(root):
+            found.add("rubygems")
         return found
 
     for path in _walk_files_with_depth(root, max_depth):
@@ -122,6 +148,10 @@ def detect_ecosystems(root: Path, *, max_depth: int | None = DEFAULT_SCAN_DEPTH)
             found.add("pypi")
         if _is_rust_marker(path):
             found.add("rust")
+        if _is_go_marker(path):
+            found.add("go")
+        if _is_rubygems_marker(path):
+            found.add("rubygems")
         if found == SUPPORTED_ECOSYSTEMS:
             break
     return found
@@ -134,7 +164,7 @@ def parse_ecosystem_option(
     max_depth: int | None = DEFAULT_SCAN_DEPTH,
 ) -> set[str]:
     """
-    Parse --ecosystem: npm, pypi, rust, all, or comma-separated (e.g. npm,rust).
+    Parse --ecosystem: npm, pypi, rust, go, rubygems, all, or comma-separated (e.g. npm,go).
     Empty / omitted → auto-detect from marker files.
     """
     if value is None or not value.strip():
@@ -154,6 +184,6 @@ def parse_ecosystem_option(
             selected.add(eco)
     if not selected:
         raise ValueError(
-            f"Invalid --ecosystem value: {value!r}. Use npm, pypi, rust, all, or npm,rust."
+            f"Invalid --ecosystem value: {value!r}. Use npm, pypi, rust, go, rubygems, all, or npm,go."
         )
     return selected

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from misteye_depscan.collectors.base import GlobalCollector, run_command
 from misteye_depscan.collectors.cargo_global import CargoInstallCollector, collect_cargo_install_global
+from misteye_depscan.collectors.go_global import GoInstallCollector, collect_go_install_global
 from misteye_depscan.collectors.mac_global import (
     NpmGlobalRootCollector,
     SystemPythonCollector,
@@ -252,41 +253,12 @@ class VoltaCollector(GlobalCollector):
         return items
 
 
-class GoGlobalCollector(GlobalCollector):
-    name = "go-global"
-    enabled = False
-
-    def collect(self) -> list[DependencyItem]:
-        gopath = os.environ.get("GOPATH") or str(Path.home() / "go")
-        mod_dir = Path(gopath) / "pkg" / "mod"
-        items: list[DependencyItem] = []
-        if not mod_dir.exists():
-            return items
-        pattern = re.compile(r"^(?P<name>.+)@v(?P<version>[^/]+)")
-        for path in mod_dir.iterdir():
-            if not path.is_dir():
-                continue
-            match = pattern.match(path.name)
-            if not match:
-                continue
-            items.append(
-                DependencyItem(
-                    name=match.group("name"),
-                    version=match.group("version"),
-                    package_type=PackageType.GO.value,
-                    source="go-global",
-                    evidence=str(path),
-                    raw=path.name,
-                )
-            )
-        return items
-
-
 PYTHON_GLOBAL_COLLECTOR_NAMES = frozenset({"system-python", "pipx"})
 NODE_GLOBAL_COLLECTOR_NAMES = frozenset(
     {"npm-global", "pnpm-global", "yarn-global", "nvm", "fnm", "volta"}
 )
 RUST_GLOBAL_COLLECTOR_NAMES = frozenset({"cargo-install"})
+GO_GLOBAL_COLLECTOR_NAMES = frozenset({"go-global"})
 
 # Default: macOS system Python + all common Node global install locations.
 DEFAULT_GLOBAL_COLLECTORS: list[GlobalCollector] = [
@@ -299,6 +271,7 @@ DEFAULT_GLOBAL_COLLECTORS: list[GlobalCollector] = [
     FnmCollector(),
     VoltaCollector(),
     CargoInstallCollector(),
+    GoInstallCollector(),
 ]
 
 # Backward-compatible alias
@@ -310,9 +283,7 @@ EXTENDED_ENV_COLLECTORS: list[GlobalCollector] = [
     CondaCollector(),
 ]
 
-OPTIONAL_COLLECTORS: list[GlobalCollector] = [
-    GoGlobalCollector(),
-]
+OPTIONAL_COLLECTORS: list[GlobalCollector] = []
 
 
 def collect_global_dependencies(
@@ -320,6 +291,7 @@ def collect_global_dependencies(
     python_only: bool = False,
     node_only: bool = False,
     rust_only: bool = False,
+    go_only: bool = False,
 ) -> tuple[list[DependencyItem], list[str]]:
     collectors = list(DEFAULT_GLOBAL_COLLECTORS)
 
@@ -329,6 +301,8 @@ def collect_global_dependencies(
         collectors = [c for c in collectors if c.name in NODE_GLOBAL_COLLECTOR_NAMES]
     elif rust_only:
         collectors = [c for c in collectors if c.name in RUST_GLOBAL_COLLECTOR_NAMES]
+    elif go_only:
+        collectors = [c for c in collectors if c.name in GO_GLOBAL_COLLECTOR_NAMES]
 
     items: list[DependencyItem] = []
     warnings: list[str] = []
@@ -337,11 +311,14 @@ def collect_global_dependencies(
             if collector.name == "cargo-install":
                 collected, cargo_warnings = collect_cargo_install_global()
                 warnings.extend(cargo_warnings)
+            elif collector.name == "go-global":
+                collected, go_warnings = collect_go_install_global()
+                warnings.extend(go_warnings)
             else:
                 collected = collector.collect()
             if collected:
                 items.extend(collected)
-            elif collector.name != "cargo-install":
+            elif collector.name not in {"cargo-install", "go-global"}:
                 warnings.append(f"No packages found via {collector.name}.")
         except Exception as exc:  # noqa: BLE001 - collector failures should not abort scan
             warnings.append(f"{collector.name} failed: {exc}")

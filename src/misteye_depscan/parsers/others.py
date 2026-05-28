@@ -16,7 +16,7 @@ CSPROJ_REF = re.compile(
 
 
 class GoParser(DependencyParser):
-    enabled = False
+    ecosystem = "go"
 
     def can_parse(self, path: Path) -> bool:
         return path.name.lower() in {"go.mod", "go.sum"}
@@ -30,20 +30,24 @@ class GoParser(DependencyParser):
         in_require = False
         for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = line.strip()
+            if not stripped or stripped.startswith("//"):
+                continue
             if stripped.startswith("require ("):
                 in_require = True
                 continue
             if in_require and stripped == ")":
                 in_require = False
                 continue
-            if stripped.startswith("require "):
+            if stripped.startswith("require ") and not in_require:
                 match = GO_REQUIRE.match(stripped)
                 if match:
                     items.append(self._item(match.group("name"), match.group("version"), path, line_no))
                 continue
             if in_require:
+                if stripped.startswith("//"):
+                    continue
                 parts = stripped.split()
-                if len(parts) >= 2:
+                if len(parts) >= 2 and parts[0] not in {"module", "go", "replace", "exclude"}:
                     items.append(self._item(parts[0], parts[1], path, line_no))
         return items
 
@@ -149,7 +153,7 @@ class RustParser(DependencyParser):
 
 
 class RubyParser(DependencyParser):
-    enabled = False
+    ecosystem = "rubygems"
 
     def can_parse(self, path: Path) -> bool:
         return path.name.lower() in {"gemfile", "gemfile.lock"}
@@ -179,24 +183,36 @@ class RubyParser(DependencyParser):
 
     def _parse_gemfile_lock(self, path: Path) -> list[DependencyItem]:
         items: list[DependencyItem] = []
+        in_specs = False
         for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("GIT") or stripped.startswith("PLATFORMS"):
+            raw_line = line.rstrip("\n")
+            stripped = raw_line.strip()
+            if not stripped:
                 continue
-            if stripped.startswith("specs:"):
+            if raw_line.startswith("GEM"):
+                in_specs = False
                 continue
-            match = re.match(r"^\s*-\s+([^\s(]+)(?:\s+\(([^)]+)\))?", stripped)
-            if match:
-                items.append(
-                    DependencyItem(
-                        name=normalize_name(match.group(1)),
-                        version=strip_version_operators(match.group(2) or ""),
-                        package_type=PackageType.RUBYGEMS.value,
-                        source=str(path),
-                        evidence=f"{path.name}:{line_no}",
-                        raw=stripped,
-                    )
+            if raw_line.startswith("  specs:"):
+                in_specs = True
+                continue
+            if raw_line.startswith("PLATFORMS") or raw_line.startswith("DEPENDENCIES"):
+                in_specs = False
+                continue
+            if not in_specs:
+                continue
+            match = re.match(r"^\s{4}([^\s(]+)\s+\(([^)]+)\)", raw_line)
+            if not match:
+                continue
+            items.append(
+                DependencyItem(
+                    name=normalize_name(match.group(1)),
+                    version=strip_version_operators(match.group(2) or ""),
+                    package_type=PackageType.RUBYGEMS.value,
+                    source=str(path),
+                    evidence=f"{path.name}:{line_no}",
+                    raw=stripped,
                 )
+            )
         return items
 
 

@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--ecosystem",
         metavar="ECOSYSTEM",
-        help="Ecosystems to scan: npm, pypi, all, or comma-separated (default: auto-detect).",
+        help="Ecosystems to scan: npm, pypi, rust, go, rubygems, all, or comma-separated (default: auto-detect).",
     )
     scan_parser.add_argument(
         "--no-node-modules",
@@ -96,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Scan only Rust cargo install globals.",
     )
+    global_parser.add_argument(
+        "--go-only",
+        action="store_true",
+        help="Scan only Go go install globals.",
+    )
     global_parser.add_argument("--quiet", action="store_true", help="Hide scan progress output.")
     global_parser.add_argument(
         "-o",
@@ -108,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument("package", help="Package target, e.g. requests@2.32.3")
     check_parser.add_argument("--npm", action="store_true", help="Treat package as npm.")
     check_parser.add_argument("--pypi", action="store_true", help="Treat package as PyPI.")
+    check_parser.add_argument("--go", action="store_true", help="Treat package as Go module.")
     check_parser.add_argument("--json", action="store_true", help="Output JSON report.")
     check_parser.add_argument("--sarif", action="store_true", help="Output SARIF report.")
     check_parser.add_argument("--quiet", action="store_true", help="Hide scan progress output.")
@@ -115,12 +121,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_package_ref(package: str, *, npm: bool = False, pypi: bool = False) -> DependencyItem:
-    if npm and pypi:
-        raise SystemExit("Use only one of --npm or --pypi.")
+def parse_package_ref(
+    package: str,
+    *,
+    npm: bool = False,
+    pypi: bool = False,
+    go: bool = False,
+) -> DependencyItem:
+    flags = sum(1 for value in (npm, pypi, go) if value)
+    if flags > 1:
+        raise SystemExit("Use only one of --npm, --pypi, or --go.")
 
-    if npm or (not pypi and package.startswith("@")):
+    if npm or (not pypi and not go and package.startswith("@")):
         package_type = PackageType.NPM.value
+    elif go:
+        package_type = PackageType.GO.value
     elif pypi:
         package_type = PackageType.PYPI.value
     else:
@@ -163,6 +178,10 @@ def _print_discovered_files(root: Path, files: list[Path]) -> None:
             by_kind["npm"].append(f)
         elif name in {"cargo.toml", "cargo.lock"}:
             by_kind["rust"].append(f)
+        elif name in {"go.mod", "go.sum"}:
+            by_kind["go"].append(f)
+        elif name in {"gemfile", "gemfile.lock"}:
+            by_kind["rubygems"].append(f)
         elif name.startswith("requirements") or name in {
             "pyproject.toml",
             "pipfile",
@@ -175,7 +194,7 @@ def _print_discovered_files(root: Path, files: list[Path]) -> None:
             by_kind["pypi"].append(f)
         else:
             by_kind["other"].append(f)
-    for kind in ("npm", "rust", "pypi", "other"):
+    for kind in ("npm", "rust", "go", "rubygems", "pypi", "other"):
         for f in by_kind.get(kind, []):
             try:
                 rel = f.relative_to(root)
@@ -256,6 +275,10 @@ def run_scan(args: argparse.Namespace) -> int:
             parts.append(f"npm={by_type['package:npm']}")
         if by_type.get("package:cratesio"):
             parts.append(f"rust={by_type['package:cratesio']}")
+        if by_type.get("package:go"):
+            parts.append(f"go={by_type['package:go']}")
+        if by_type.get("package:rubygems"):
+            parts.append(f"rubygems={by_type['package:rubygems']}")
         if by_type.get("package:pypi"):
             parts.append(f"pypi={by_type['package:pypi']}")
         if parts:
@@ -277,6 +300,7 @@ def run_global(args: argparse.Namespace) -> int:
             python_only=args.python_only,
             node_only=args.node_only,
             rust_only=args.rust_only,
+            go_only=args.go_only,
         ),
         message="Scanning global environments ...",
     )
@@ -299,7 +323,12 @@ def run_global(args: argparse.Namespace) -> int:
 
 
 def run_check(args: argparse.Namespace) -> int:
-    dependency = parse_package_ref(args.package, npm=args.npm, pypi=args.pypi)
+    dependency = parse_package_ref(
+        args.package,
+        npm=args.npm,
+        pypi=args.pypi,
+        go=args.go,
+    )
     return _run_detection(
         [dependency],
         output_json=args.json,

@@ -11,8 +11,6 @@ from misteye_depscan.models import DependencyItem
 DEFAULT_MAX_DEPTH = 10
 
 OPTIONAL_MANIFEST_NAMES = {
-    "go.mod",
-    "go.sum",
     "gemfile",
     "gemfile.lock",
     "composer.json",
@@ -110,7 +108,13 @@ def _path_skipped_for_manifests(path: Path) -> bool:
 
 
 def _matches_ecosystem_filename(path: Path, ecosystem: str) -> bool:
-    from misteye_depscan.ecosystems import NPM_MARKERS, PYPI_MARKERS, RUST_MARKERS
+    from misteye_depscan.ecosystems import (
+        GO_MARKERS,
+        NPM_MARKERS,
+        PYPI_MARKERS,
+        RUBYGEMS_MARKERS,
+        RUST_MARKERS,
+    )
 
     name = path.name.lower()
     if ecosystem == "npm":
@@ -121,6 +125,10 @@ def _matches_ecosystem_filename(path: Path, ecosystem: str) -> bool:
         return name.startswith("requirements") and name.endswith(".txt")
     if ecosystem == "rust":
         return name in RUST_MARKERS
+    if ecosystem == "go":
+        return name in GO_MARKERS
+    if ecosystem == "rubygems":
+        return name in RUBYGEMS_MARKERS
     return False
 
 
@@ -174,6 +182,8 @@ def find_manifest_files(
             _matches_ecosystem_filename(path, "npm")
             or _matches_ecosystem_filename(path, "pypi")
             or _matches_ecosystem_filename(path, "rust")
+            or _matches_ecosystem_filename(path, "go")
+            or _matches_ecosystem_filename(path, "rubygems")
             or (include_optional and name in OPTIONAL_MANIFEST_NAMES)
         ):
             continue

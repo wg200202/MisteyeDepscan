@@ -52,6 +52,34 @@ def parse_dependency_file(path: Path, *, include_optional: bool = False) -> list
     return parser.parse(path)
 
 
+def _filter_go_module_manifests(manifest_files: list[Path]) -> list[Path]:
+    """Prefer ``go.sum`` over ``go.mod`` in the same module directory."""
+    non_go = [
+        path
+        for path in manifest_files
+        if path.name.lower() not in {"go.mod", "go.sum"}
+    ]
+    go_files = [
+        path
+        for path in manifest_files
+        if path.name.lower() in {"go.mod", "go.sum"}
+    ]
+    if not go_files:
+        return manifest_files
+
+    sum_dirs = {path.parent.resolve() for path in go_files if path.name.lower() == "go.sum"}
+    if not sum_dirs:
+        return non_go + go_files
+
+    sums = [path for path in go_files if path.name.lower() == "go.sum"]
+    mods = [
+        path
+        for path in go_files
+        if path.name.lower() == "go.mod" and path.parent.resolve() not in sum_dirs
+    ]
+    return non_go + sums + mods
+
+
 def _filter_rust_workspace_manifests(root: Path, manifest_files: list[Path]) -> list[Path]:
     """Prefer each workspace ``Cargo.lock`` over member ``Cargo.toml`` files; keep npm/pypi."""
     non_rust = [
@@ -123,6 +151,8 @@ def collect_project_dependencies(
     manifest_files = find_manifest_files(
         root, ecosystems=ecosystems, include_optional=include_optional, max_depth=max_depth
     )
+    if "go" in ecosystems:
+        manifest_files = _filter_go_module_manifests(manifest_files)
     if "rust" in ecosystems:
         manifest_files = _filter_rust_workspace_manifests(root, manifest_files)
     discovered_files.extend(manifest_files)

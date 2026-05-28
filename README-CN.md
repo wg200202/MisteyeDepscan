@@ -9,7 +9,7 @@
 - 运行时依赖极少（Python 3.10+；在 3.10 上会自动安装 `tomli` 以解析 `pyproject.toml`）
 - 三个子命令：`scan` / `global` / `check`
 - 支持 Python 与 JS/TS 清单及锁文件
-- 全局扫描：系统 Python、Node 全局（npm -g、pnpm -g、yarn global、nvm/fnm/volta）、Rust `cargo install`（`cargo install --list` + 各包的 `Cargo.lock`）
+- 全局扫描：系统 Python、Node 全局（npm -g、pnpm -g、yarn global、nvm/fnm/volta）、Rust `cargo install`、Go `go install`（`go version -m` 解析依赖）
 - 输出格式：终端表格 / JSON / SARIF
 - API 限流（10 次/秒）
 - 扫描过程按包显示进度；可用 `-o` 保存完整报告
@@ -113,10 +113,11 @@ depscan scan /path/to/project
 # - Node：npm -g、pnpm -g、yarn global、nvm/fnm/volta 各版本下的全局包
 depscan global
 
-# 仅 Python / Node / Rust 全局环境
+# 仅 Python / Node / Rust / Go 全局环境
 depscan global --python-only
 depscan global --node-only
 depscan global --rust-only
+depscan global --go-only
 
 # 检查单个包
 depscan check requests==2.32.3 --pypi
@@ -159,12 +160,15 @@ API 返回 `status: unknown` 时界面显示为 **No threat record**（绿色）
 
 ## 生态（自动检测）
 
-与 MistEye 对齐：**npm** 与 **PyPI** 支持自动检测并扫描。
+与 MistEye 对齐：**npm**、**PyPI**、**Rust**、**Go**、**RubyGems** 支持自动检测并扫描。
 
 | 生态 | 标记文件 | 状态 |
 |------|----------|------|
 | **npm** | `package.json`、`package-lock.json`、`yarn.lock`、`pnpm-lock.yaml` | 已支持 |
 | **PyPI** | `pyproject.toml`、`requirements*.txt`、`Pipfile`、`Pipfile.lock`、`poetry.lock`、`uv.lock`、`setup.py`、`setup.cfg` | 已支持 |
+| **Rust** | `Cargo.toml`、`Cargo.lock`（workspace 优先根 `Cargo.lock`） | 已支持 |
+| **Go** | `go.mod`、`go.sum`（同目录优先 `go.sum`） | 已支持 |
+| **RubyGems** | `Gemfile`、`Gemfile.lock` | 已支持 |
 
 **自动检测规则**
 
@@ -176,8 +180,11 @@ API 返回 `status: unknown` 时界面显示为 **No threat record**（绿色）
 ```bash
 depscan scan . --ecosystem=npm
 depscan scan . --ecosystem=pypi
+depscan scan . --ecosystem=rust
+depscan scan . --ecosystem=go
+depscan scan . --ecosystem=rubygems
 depscan scan . --ecosystem=all
-depscan scan . --ecosystem=npm,pypi   # 省略时 = 自动检测
+depscan scan . --ecosystem=npm,pypi,rust,go,rubygems   # 省略时 = 自动检测
 
 # 仅清单/锁文件（不扫描 node_modules 已安装树）
 depscan scan . --no-node-modules
@@ -185,10 +192,13 @@ depscan scan . --no-node-modules
 
 ## 支持的依赖文件
 
-**默认（npm + PyPI）**
+**默认（自动检测 npm / PyPI / Rust / Go / RubyGems）**
 
 - **PyPI**：`requirements*.txt`、`pyproject.toml`（PEP 621 + Poetry `[tool.poetry]`，含 `group.*.dependencies`）、`Pipfile`、`Pipfile.lock`、`poetry.lock`、`uv.lock`、`setup.py`、`setup.cfg`
 - **npm**：`package.json`、`package-lock.json`、`pnpm-lock.yaml`、`yarn.lock`，以及 `node_modules/**/package.json`
+- **Rust**：`Cargo.lock`（workspace 根目录）
+- **Go**：`go.sum`（有则优先于同目录 `go.mod`）
+- **RubyGems**：`Gemfile`、`Gemfile.lock`
 
 > **暂不支持 Java / Maven**。MistEye Detect API 目前没有 `package:maven` 类型，把 Maven 坐标按其他生态发送会产生误报，所以工具暂不解析 Java 依赖。
 
