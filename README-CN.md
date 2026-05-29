@@ -6,8 +6,9 @@
 
 ## 功能特性
 
-- 运行时依赖极少（Python 3.10+；在 3.10 上会自动安装 `tomli` 以解析 `pyproject.toml`）
+- 运行时依赖少（Python 3.10+；`rich` 用于实时仪表盘；在 3.10 上会自动安装 `tomli` 以解析 `pyproject.toml`）
 - 三个子命令：`scan` / `global` / `check`
+- 交互式终端下显示实时仪表盘：顶部 logo + 统计、左侧扫描路径/发现、右侧扫描进度、底部命中的恶意依赖（管道、`--json`/`--sarif`/`--quiet` 或非 TTY 时自动回退为顺序文本输出）
 - 支持 Python 与 JS/TS 清单及锁文件
 - 全局扫描：系统 Python、Node 全局（npm -g、pnpm -g、yarn global、nvm/fnm/volta）、Rust `cargo install`、Go `go install`（`go version -m` 解析依赖）
 - 输出格式：终端表格 / JSON / SARIF

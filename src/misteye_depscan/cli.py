@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Callable
 
 from misteye_depscan import __version__
 from misteye_depscan.banner import print_banner
 from misteye_depscan.api import MistEyeClient
 from misteye_depscan.collectors import collect_global_dependencies
 from misteye_depscan.config import ensure_api_key, load_api_key, prompt_and_save_api_key
+from misteye_depscan.dashboard import ScanUI, create_scan_ui, dashboard_enabled
 from misteye_depscan.models import DependencyItem, PackageType
 from misteye_depscan.ecosystems import parse_ecosystem_option
 from misteye_depscan.parsers import collect_project_dependencies
@@ -158,9 +160,13 @@ def parse_package_ref(
     )
 
 
-def _print_discovered_files(root: Path, files: list[Path]) -> None:
+def _print_discovered_files(
+    root: Path,
+    files: list[Path],
+    emit: Callable[[str], None],
+) -> None:
     if not files:
-        print("No dependency files found.", file=sys.stderr)
+        emit("No dependency files found.")
         return
 
     from collections import defaultdict
@@ -170,7 +176,7 @@ def _print_discovered_files(root: Path, files: list[Path]) -> None:
     for f in files:
         (nm_files if "node_modules" in f.parts else manifest_files).append(f)
 
-    print(f"Discovered {len(files)} dependency file(s):", file=sys.stderr)
+    emit(f"Discovered {len(files)} dependency file(s):")
     by_kind: dict[str, list[Path]] = defaultdict(list)
     for f in manifest_files:
         name = f.name.lower()
@@ -200,7 +206,7 @@ def _print_discovered_files(root: Path, files: list[Path]) -> None:
                 rel = f.relative_to(root)
             except ValueError:
                 rel = f
-            print(f"  [{kind}] {rel}", file=sys.stderr)
+            emit(f"  [{kind}] {rel}")
 
     if nm_files:
         groups: dict[Path, int] = defaultdict(int)
@@ -216,7 +222,7 @@ def _print_discovered_files(root: Path, files: list[Path]) -> None:
                 rel = nm_dir.relative_to(root)
             except ValueError:
                 rel = nm_dir
-            print(f"  {rel}/ ({count} packages)", file=sys.stderr)
+            emit(f"  {rel}/ ({count} packages)")
 
 
 def _resolve_api_key() -> str:
@@ -226,6 +232,22 @@ def _resolve_api_key() -> str:
     if sys.stdin.isatty():
         return prompt_and_save_api_key()
     return ensure_api_key(interactive=False)
+
+
+def _collect_with_ui(
+    ui: ScanUI,
+    fn: Callable[[], object],
+    message: str,
+) -> object:
+    """Run a (blocking) collection step, showing a spinner only in plain mode.
+
+    In live-dashboard mode the dashboard's own refresh loop provides feedback,
+    so we avoid the stderr spinner which would corrupt the live region.
+    """
+    if ui.is_live:
+        ui.log(message)
+        return fn()
+    return run_with_progress(fn, message=message)
 
 
 def run_scan(args: argparse.Namespace) -> int:
@@ -247,8 +269,22 @@ def run_scan(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 3
 
+    try:
+        api_key = _resolve_api_key()
+    except SystemExit as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+    client = MistEyeClient(api_key)
+
     depth_label = "unlimited" if depth == 0 else str(depth)
-    print(f"Scan depth: {depth_label} (recursive manifest discovery)", file=sys.stderr)
+    eco_text = ", ".join(sorted(ecosystems))
+
+    ui = create_scan_ui(
+        output_json=args.json,
+        output_sarif=args.sarif,
+        quiet=args.quiet,
+        title="MistEye DepScan",
+    )
 
     def _collect() -> tuple[list[DependencyItem], list[str], list[Path]]:
         return collect_project_dependencies(
@@ -259,65 +295,103 @@ def run_scan(args: argparse.Namespace) -> int:
             max_depth=max_depth,
         )
 
-    dependencies, collect_warnings, discovered_files = run_with_progress(
-        _collect,
-        message=f"Scanning {root} ...",
-    )
-    eco_text = ", ".join(sorted(ecosystems))
-    print(f"Ecosystems: {eco_text}", file=sys.stderr)
-    _print_discovered_files(root, discovered_files)
-    if dependencies:
-        from collections import Counter
+    with ui:
+        ui.set_header(Mode="project scan", Target=str(root), Ecosystems=eco_text, Depth=depth_label)
+        ui.set_phase("COLLECT")
+        ui.log(f"Scan depth: {depth_label} (recursive manifest discovery)")
+        dependencies, collect_warnings, discovered_files = _collect_with_ui(
+            ui, _collect, f"Scanning {root} ..."
+        )
+        ui.log(f"Ecosystems: {eco_text}")
+        _print_discovered_files(root, discovered_files, ui.log)
+        if dependencies:
+            from collections import Counter
 
-        by_type = Counter(d.package_type for d in dependencies)
-        parts = []
-        if by_type.get("package:npm"):
-            parts.append(f"npm={by_type['package:npm']}")
-        if by_type.get("package:cratesio"):
-            parts.append(f"rust={by_type['package:cratesio']}")
-        if by_type.get("package:go"):
-            parts.append(f"go={by_type['package:go']}")
-        if by_type.get("package:rubygems"):
-            parts.append(f"rubygems={by_type['package:rubygems']}")
-        if by_type.get("package:pypi"):
-            parts.append(f"pypi={by_type['package:pypi']}")
-        if parts:
-            print(f"Collected dependencies: {', '.join(parts)}", file=sys.stderr)
-    print(f"Dependencies to check: {len(dependencies)}", file=sys.stderr)
-    return _run_detection(
-        dependencies,
+            by_type = Counter(d.package_type for d in dependencies)
+            parts = []
+            if by_type.get("package:npm"):
+                parts.append(f"npm={by_type['package:npm']}")
+            if by_type.get("package:cratesio"):
+                parts.append(f"rust={by_type['package:cratesio']}")
+            if by_type.get("package:go"):
+                parts.append(f"go={by_type['package:go']}")
+            if by_type.get("package:rubygems"):
+                parts.append(f"rubygems={by_type['package:rubygems']}")
+            if by_type.get("package:pypi"):
+                parts.append(f"pypi={by_type['package:pypi']}")
+            if parts:
+                ui.log(f"Collected dependencies: {', '.join(parts)}")
+        ui.log(f"Dependencies to check: {len(dependencies)}")
+        report = _run_detection(
+            dependencies,
+            client=client,
+            quiet=args.quiet,
+            output_json=args.json,
+            output_sarif=args.sarif,
+            warnings=collect_warnings,
+            ui=ui,
+        )
+
+    return _emit_report(
+        report,
         output_json=args.json,
         output_sarif=args.sarif,
         quiet=args.quiet,
-        warnings=collect_warnings,
         output_file=getattr(args, "output", None),
     )
 
 
 def run_global(args: argparse.Namespace) -> int:
-    dependencies, warnings = run_with_progress(
-        lambda: collect_global_dependencies(
-            python_only=args.python_only,
-            node_only=args.node_only,
-            rust_only=args.rust_only,
-            go_only=args.go_only,
-        ),
-        message="Scanning global environments ...",
-    )
-    if not dependencies:
-        warnings.append("No global packages were discovered.")
-    else:
-        sources = sorted({d.source for d in dependencies})
-        print("Scan sources:", file=sys.stderr)
-        for src in sources:
-            print(f"  {src}", file=sys.stderr)
-    print(f"Dependencies to check: {len(dependencies)}", file=sys.stderr)
-    return _run_detection(
-        dependencies,
+    try:
+        api_key = _resolve_api_key()
+    except SystemExit as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+    client = MistEyeClient(api_key)
+
+    ui = create_scan_ui(
         output_json=args.json,
         output_sarif=args.sarif,
         quiet=args.quiet,
-        warnings=warnings,
+        title="MistEye DepScan",
+    )
+
+    with ui:
+        ui.set_header(Mode="global env", Target="local machine")
+        ui.set_phase("COLLECT")
+        dependencies, warnings = _collect_with_ui(
+            ui,
+            lambda: collect_global_dependencies(
+                python_only=args.python_only,
+                node_only=args.node_only,
+                rust_only=args.rust_only,
+                go_only=args.go_only,
+            ),
+            "Scanning global environments ...",
+        )
+        if not dependencies:
+            warnings.append("No global packages were discovered.")
+        else:
+            sources = sorted({d.source for d in dependencies})
+            ui.log("Scan sources:")
+            for src in sources:
+                ui.log(f"  {src}")
+        ui.log(f"Dependencies to check: {len(dependencies)}")
+        report = _run_detection(
+            dependencies,
+            client=client,
+            quiet=args.quiet,
+            output_json=args.json,
+            output_sarif=args.sarif,
+            warnings=warnings,
+            ui=ui,
+        )
+
+    return _emit_report(
+        report,
+        output_json=args.json,
+        output_sarif=args.sarif,
+        quiet=args.quiet,
         output_file=getattr(args, "output", None),
     )
 
@@ -329,33 +403,73 @@ def run_check(args: argparse.Namespace) -> int:
         pypi=args.pypi,
         go=args.go,
     )
-    return _run_detection(
-        [dependency],
+    try:
+        api_key = _resolve_api_key()
+    except SystemExit as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+    client = MistEyeClient(api_key)
+
+    ui = create_scan_ui(
         output_json=args.json,
         output_sarif=args.sarif,
         quiet=args.quiet,
-        warnings=[],
+        title="MistEye DepScan",
+    )
+
+    with ui:
+        ui.set_header(Mode="single check", Target=dependency.target)
+        report = _run_detection(
+            [dependency],
+            client=client,
+            quiet=args.quiet,
+            output_json=args.json,
+            output_sarif=args.sarif,
+            warnings=[],
+            ui=ui,
+        )
+
+    return _emit_report(
+        report,
+        output_json=args.json,
+        output_sarif=args.sarif,
+        quiet=args.quiet,
+        output_file=None,
     )
 
 
 def _run_detection(
     dependencies: list[DependencyItem],
     *,
-    output_json: bool,
-    output_sarif: bool = False,
+    client: MistEyeClient,
     quiet: bool,
+    output_json: bool,
+    output_sarif: bool,
     warnings: list[str],
-    output_file: str | None = None,
-) -> int:
-    api_key = _resolve_api_key()
-    client = MistEyeClient(api_key)
+    ui: ScanUI,
+):
+    """Run the detection phase inside the (already started) UI and return the report."""
+    ui.begin_scan(len(dependencies))
     scanner = DependencyScanner(
         client,
         show_progress=not quiet and not output_json and not output_sarif,
+        progress_callback=ui.on_progress if ui.is_live else None,
     )
     report = scanner.scan_dependencies(dependencies)
     report.warnings.extend(warnings)
+    ui.set_phase("DONE")
+    return report
 
+
+def _emit_report(
+    report,
+    *,
+    output_json: bool,
+    output_sarif: bool,
+    quiet: bool,
+    output_file: str | None,
+) -> int:
+    """Render and print the final report after the live UI has closed."""
     if output_sarif:
         output_format = "sarif"
     elif output_json:
@@ -368,10 +482,14 @@ def _run_detection(
     if output_file:
         out_path = Path(output_file).expanduser()
         save_format = "sarif" if output_sarif else "json"
-        out_path.write_text(
-            render_report(report, output_format=save_format),
-            encoding="utf-8",
-        )
+        try:
+            out_path.write_text(
+                render_report(report, output_format=save_format),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            print(f"Failed to save report to {out_path}: {exc}", file=sys.stderr)
+            return report.exit_code
         if not quiet:
             print(f"Report saved to {out_path.resolve()}", file=sys.stderr)
 
@@ -392,7 +510,15 @@ def _main_inner(argv: list[str] | None = None) -> int:
     set_color_enabled(not args.no_color)
 
     if args.command in {"scan", "global", "check"}:
-        print_banner()
+        # The live dashboard renders its own logo; only print the static banner
+        # when we are going to use plain sequential output.
+        use_dashboard = dashboard_enabled(
+            output_json=getattr(args, "json", False),
+            output_sarif=getattr(args, "sarif", False),
+            quiet=getattr(args, "quiet", False),
+        )
+        if not use_dashboard:
+            print_banner()
 
     if args.command == "scan":
         return run_scan(args)

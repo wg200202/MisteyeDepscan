@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable
 
 from misteye_depscan.api import (
     API_STATUS_MALICIOUS,
@@ -22,10 +24,15 @@ class DependencyScanner:
         *,
         workers: int = 4,
         show_progress: bool = True,
+        progress_callback: Callable[[int, int, DetectionResult], None] | None = None,
     ) -> None:
         self.client = client
         self.workers = max(1, workers)
         self.show_progress = show_progress
+        # When set, the callback receives (completed, total, result) for each
+        # finished package and takes over presentation (e.g. live dashboard);
+        # the inline progress line is then suppressed.
+        self.progress_callback = progress_callback
 
     def scan_dependencies(self, dependencies: list[DependencyItem]) -> ScanReport:
         report = ScanReport(dependency_count=len(dependencies))
@@ -55,7 +62,16 @@ class DependencyScanner:
                         )
                     results.append(result)
                     completed += 1
-                    if self.show_progress:
+                    if self.progress_callback is not None:
+                        try:
+                            self.progress_callback(completed, total, result)
+                        except Exception as exc:
+                            print(
+                                f"Progress callback failed: {exc}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                    elif self.show_progress:
                         print(self._format_progress_line(completed, total, result), flush=True)
             except KeyboardInterrupt:
                 for f in futures:
