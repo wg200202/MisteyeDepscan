@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import socket
+import ssl
 import threading
 import time
 import urllib.error
@@ -114,45 +116,52 @@ class MistEyeClient:
                 last_error = exc
                 if exc.code == 429 and attempt < self.max_retries:
                     retry_after = exc.headers.get("Retry-After")
-                    delay = float(retry_after) if retry_after else min(2**attempt, 8)
+                    delay = float(retry_after) if retry_after else self._backoff(attempt)
+                    self._log_retry(target, attempt, f"HTTP {exc.code} (rate limited)", delay)
                     time.sleep(delay)
                     continue
                 raise MistEyeAPIError(self._format_http_error(exc), status_code=exc.code) from exc
             except urllib.error.URLError as exc:
+                # Most connection-time failures (DNS, refused, TLS handshake,
+                # SSL EOF) arrive here wrapped in URLError.
                 last_error = exc
                 if attempt < self.max_retries and _is_retryable_url_error(exc):
-                    delay = min(2**attempt, 8)
-                    logger.warning(
-                        "MistEye API network error for %s (attempt %s/%s): %s; retry in %ss",
-                        target,
-                        attempt + 1,
-                        self.max_retries + 1,
-                        exc.reason,
-                        delay,
-                    )
+                    delay = self._backoff(attempt)
+                    self._log_retry(target, attempt, str(exc.reason), delay)
                     time.sleep(delay)
                     continue
                 raise MistEyeAPIError(f"Network error: {exc.reason}") from exc
-            except (TimeoutError, socket.timeout) as exc:
+            except (ssl.SSLError, ConnectionError, TimeoutError, socket.timeout) as exc:
+                # SSL / connection / timeout errors raised while *reading* the
+                # response body are not wrapped in URLError, so they would
+                # otherwise escape unretried. Treat them as transient.
                 last_error = exc
                 if attempt < self.max_retries:
-                    delay = min(2**attempt, 8)
-                    logger.warning(
-                        "MistEye API timeout for %s (attempt %s/%s); retry in %ss",
-                        target,
-                        attempt + 1,
-                        self.max_retries + 1,
-                        delay,
-                    )
+                    delay = self._backoff(attempt)
+                    self._log_retry(target, attempt, str(exc) or type(exc).__name__, delay)
                     time.sleep(delay)
                     continue
-                raise MistEyeAPIError(
-                    f"Request timed out after {self.timeout}s: {target}"
-                ) from exc
+                raise MistEyeAPIError(f"Network error: {exc}") from exc
             except json.JSONDecodeError as exc:
                 raise MistEyeAPIError("Invalid JSON response from MistEye API.") from exc
 
         raise MistEyeAPIError(str(last_error) if last_error else "Unknown API error.")
+
+    @staticmethod
+    def _backoff(attempt: int) -> float:
+        """Exponential backoff (capped) with a little jitter to avoid sync retries."""
+        base = min(2**attempt, 8)
+        return base + random.uniform(0.0, 0.5)
+
+    def _log_retry(self, target: str, attempt: int, reason: str, delay: float) -> None:
+        logger.warning(
+            "MistEye API transient error for %s (attempt %s/%s): %s; retry in %.1fs",
+            target,
+            attempt + 1,
+            self.max_retries + 1,
+            reason,
+            delay,
+        )
 
     @staticmethod
     def _format_http_error(exc: urllib.error.HTTPError) -> str:
@@ -168,8 +177,16 @@ class MistEyeClient:
 
 def _is_retryable_url_error(exc: urllib.error.URLError) -> bool:
     reason = exc.reason
-    if isinstance(reason, (TimeoutError, socket.timeout)):
+    # Transient TLS errors (e.g. SSL: UNEXPECTED_EOF_WHILE_READING) carry an
+    # SSL-specific errno that is *not* in the known network errno set, so they
+    # must be matched by type before the errno check below, otherwise they were
+    # incorrectly treated as non-retryable.
+    if isinstance(reason, ssl.SSLError):
+        return True
+    if isinstance(reason, (TimeoutError, socket.timeout, ConnectionError)):
         return True
     if isinstance(reason, OSError) and reason.errno is not None:
-        return reason.errno in {110, 60}  # ETIMEDOUT, ECONNRESET (platform-dependent)
+        # ECONNRESET (54/104), ETIMEDOUT (60/110), ECONNABORTED (53/103),
+        # EPIPE (32), ECONNREFUSED (61/111) across macOS/Linux.
+        return reason.errno in {32, 53, 54, 60, 61, 103, 104, 110, 111}
     return True

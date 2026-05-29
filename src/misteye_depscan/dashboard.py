@@ -422,26 +422,19 @@ class RichDashboard(ScanUI):
         body_height = max(6, total_height - header_size - footer_size)
         panel_inner = max(3, body_height - 2)
 
-        # The ASCII logo is ~52 columns wide; give it a fixed region (when the
-        # terminal is wide enough) so it is not truncated, and let the stats
-        # panel take the remaining width.
-        logo_width = 54
+        # All four panels share the same vertical split (1:1) so the left column
+        # (logo / Scan Targets) and right column (Scan Status / Scan Progress)
+        # line up exactly and every box is the same width as the one above it.
         layout = Layout()
         layout.split_column(
             Layout(name="header", size=header_size),
             Layout(name="body", ratio=1),
             Layout(name="footer", size=footer_size),
         )
-        if console.size.width >= logo_width + 30:
-            layout["header"].split_row(
-                Layout(self._build_logo(), name="logo", size=logo_width),
-                Layout(self._build_stats(), name="stats", ratio=1),
-            )
-        else:
-            layout["header"].split_row(
-                Layout(self._build_logo(), name="logo", ratio=2),
-                Layout(self._build_stats(), name="stats", ratio=3),
-            )
+        layout["header"].split_row(
+            Layout(self._build_logo(), name="logo", ratio=1),
+            Layout(self._build_stats(), name="stats", ratio=1),
+        )
         layout["body"].split_row(
             Layout(self._build_left(panel_inner), name="left", ratio=1),
             Layout(self._build_right(panel_inner), name="right", ratio=1),
