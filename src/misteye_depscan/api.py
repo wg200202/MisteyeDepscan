@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import random
-import socket
-import ssl
 import threading
 import time
 import urllib.error
@@ -93,9 +91,10 @@ class MistEyeClient:
         self.max_retries = max_retries
         self._limiter = RateLimiter(rate_limit)
 
-    def detect(self, target: str, package_type: str) -> dict[str, Any]:
+    def _build_request(self, target: str, package_type: str) -> urllib.request.Request:
+        """Build a fresh POST request (must be recreated on each retry attempt)."""
         payload = json.dumps({"target": target, "type": package_type}).encode("utf-8")
-        request = urllib.request.Request(
+        return urllib.request.Request(
             DETECT_URL,
             data=payload,
             method="POST",
@@ -105,47 +104,44 @@ class MistEyeClient:
             },
         )
 
+    def detect(self, target: str, package_type: str) -> dict[str, Any]:
+        """Call the detect API. Any request failure is retried up to ``max_retries`` times."""
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             self._limiter.wait()
+            request = self._build_request(target, package_type)
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                    body = response.read().decode("utf-8")
-                    return json.loads(body)
-            except urllib.error.HTTPError as exc:
+                data = self._fetch_json(request)
+                if _response_is_valid(data):
+                    return data
+                detail = data.get("error", data) if isinstance(data, dict) else data
+                raise MistEyeAPIError(f"API error: {detail}")
+            except Exception as exc:
                 last_error = exc
-                if exc.code == 429 and attempt < self.max_retries:
+                if attempt >= self.max_retries:
+                    break
+                delay = self._backoff(attempt)
+                if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
                     retry_after = exc.headers.get("Retry-After")
-                    delay = float(retry_after) if retry_after else self._backoff(attempt)
-                    self._log_retry(target, attempt, f"HTTP {exc.code} (rate limited)", delay)
-                    time.sleep(delay)
-                    continue
-                raise MistEyeAPIError(self._format_http_error(exc), status_code=exc.code) from exc
-            except urllib.error.URLError as exc:
-                # Most connection-time failures (DNS, refused, TLS handshake,
-                # SSL EOF) arrive here wrapped in URLError.
-                last_error = exc
-                if attempt < self.max_retries and _is_retryable_url_error(exc):
-                    delay = self._backoff(attempt)
-                    self._log_retry(target, attempt, str(exc.reason), delay)
-                    time.sleep(delay)
-                    continue
-                raise MistEyeAPIError(f"Network error: {exc.reason}") from exc
-            except (ssl.SSLError, ConnectionError, TimeoutError, socket.timeout) as exc:
-                # SSL / connection / timeout errors raised while *reading* the
-                # response body are not wrapped in URLError, so they would
-                # otherwise escape unretried. Treat them as transient.
-                last_error = exc
-                if attempt < self.max_retries:
-                    delay = self._backoff(attempt)
-                    self._log_retry(target, attempt, str(exc) or type(exc).__name__, delay)
-                    time.sleep(delay)
-                    continue
-                raise MistEyeAPIError(f"Network error: {exc}") from exc
-            except json.JSONDecodeError as exc:
-                raise MistEyeAPIError("Invalid JSON response from MistEye API.") from exc
+                    if retry_after:
+                        try:
+                            delay = float(retry_after)
+                        except ValueError:
+                            pass
+                self._log_retry(target, attempt, _failure_reason(exc), delay)
+                time.sleep(delay)
 
-        raise MistEyeAPIError(str(last_error) if last_error else "Unknown API error.")
+        if last_error is None:
+            raise MistEyeAPIError("Unknown API error.")
+        raise self._to_api_error(last_error) from last_error
+
+    def _fetch_json(self, request: urllib.request.Request) -> dict[str, Any]:
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            body = response.read().decode("utf-8")
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            raise MistEyeAPIError(f"Unexpected API response type: {type(data).__name__}")
+        return data
 
     @staticmethod
     def _backoff(attempt: int) -> float:
@@ -164,29 +160,63 @@ class MistEyeClient:
         )
 
     @staticmethod
-    def _format_http_error(exc: urllib.error.HTTPError) -> str:
-        try:
-            detail = exc.read().decode("utf-8")
-        except Exception:
-            detail = exc.reason
+    def _format_http_error(
+        exc: urllib.error.HTTPError,
+        *,
+        body: str | None = None,
+    ) -> str:
+        detail = body
+        if detail is None:
+            try:
+                detail = exc.read().decode("utf-8")
+            except Exception as read_exc:
+                logger.warning("Failed to read HTTP error body: %s", read_exc)
+                detail = exc.reason
         return f"HTTP {exc.code}: {detail or exc.reason}"
+
+    @staticmethod
+    def _to_api_error(exc: Exception) -> MistEyeAPIError:
+        if isinstance(exc, MistEyeAPIError):
+            return exc
+        if isinstance(exc, urllib.error.HTTPError):
+            body = _read_http_error_body(exc)
+            return MistEyeAPIError(
+                MistEyeClient._format_http_error(exc, body=body),
+                status_code=exc.code,
+            )
+        if isinstance(exc, urllib.error.URLError):
+            return MistEyeAPIError(f"Network error: {exc.reason}")
+        if isinstance(exc, json.JSONDecodeError):
+            return MistEyeAPIError("Invalid JSON response from MistEye API.")
+        return MistEyeAPIError(str(exc))
 
     def test_connection(self) -> dict[str, Any]:
         return self.detect("example.com", "domain")
 
 
-def _is_retryable_url_error(exc: urllib.error.URLError) -> bool:
-    reason = exc.reason
-    # Transient TLS errors (e.g. SSL: UNEXPECTED_EOF_WHILE_READING) carry an
-    # SSL-specific errno that is *not* in the known network errno set, so they
-    # must be matched by type before the errno check below, otherwise they were
-    # incorrectly treated as non-retryable.
-    if isinstance(reason, ssl.SSLError):
+def _response_is_valid(data: dict[str, Any]) -> bool:
+    """True when the payload is a successful detect response (not an error object)."""
+    try:
+        parse_detect_response(data)
         return True
-    if isinstance(reason, (TimeoutError, socket.timeout, ConnectionError)):
-        return True
-    if isinstance(reason, OSError) and reason.errno is not None:
-        # ECONNRESET (54/104), ETIMEDOUT (60/110), ECONNABORTED (53/103),
-        # EPIPE (32), ECONNREFUSED (61/111) across macOS/Linux.
-        return reason.errno in {32, 53, 54, 60, 61, 103, 104, 110, 111}
-    return True
+    except MistEyeAPIError:
+        return False
+
+
+def _failure_reason(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        body = _read_http_error_body(exc)
+        return f"HTTP {exc.code}: {body or exc.reason}"
+    if isinstance(exc, urllib.error.URLError):
+        return f"Network error: {exc.reason}"
+    if isinstance(exc, json.JSONDecodeError):
+        return "Invalid JSON response from MistEye API."
+    return str(exc) or type(exc).__name__
+
+
+def _read_http_error_body(exc: urllib.error.HTTPError) -> str:
+    try:
+        return exc.read().decode("utf-8")
+    except Exception as read_exc:
+        logger.warning("Failed to read HTTP error body: %s", read_exc)
+        return ""

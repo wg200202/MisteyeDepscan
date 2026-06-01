@@ -20,12 +20,12 @@ classifiers = [
     "Topic :: Security",
 ]
 dependencies = [
-    "tomli>=2.0.1; python_version < '3.11'",
-    "rich>=13.0",
+    "tomli==2.4.1; python_version < '3.11'",
+    "rich==15.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest==9.0.3"]
 
 [project.scripts]
 depscan = "misteye_depscan.cli:main"
