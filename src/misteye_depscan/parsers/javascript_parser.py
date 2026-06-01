@@ -8,6 +8,7 @@ from misteye_depscan.models import DependencyItem, PackageType
 from misteye_depscan.parsers.base import (
     DependencyParser,
     is_npm_package_root_package_json,
+    is_private_npm_package,
     normalize_name,
     resolve_npm_dependency,
     strip_version_operators,
@@ -53,8 +54,12 @@ class JavaScriptParser(DependencyParser):
         under_node_modules = "node_modules" in path.parts
         at_package_root = is_npm_package_root_package_json(path)
 
+        # Root / workspace package.json (not under node_modules): never scan the project's
+        # own name@version — only external deps from dependencies/* sections below.
+
         # Installed package at node_modules/<pkg>/package.json only (not docs/, lib/, etc.)
-        if at_package_root:
+        # Skip private packages — they are local/workspace artifacts, not registry deps.
+        if at_package_root and not is_private_npm_package(data):
             installed_name = str(data.get("name") or "").strip()
             installed_version = strip_version_operators(str(data.get("version") or ""))
             if installed_name and installed_version:
@@ -109,6 +114,8 @@ class JavaScriptParser(DependencyParser):
         packages = data.get("packages") or {}
         for pkg_path, meta in packages.items():
             if not isinstance(meta, dict):
+                continue
+            if is_private_npm_package(meta):
                 continue
             version = meta.get("version")
             if not version:

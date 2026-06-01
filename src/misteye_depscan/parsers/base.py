@@ -81,6 +81,18 @@ def _parse_npm_alias_payload(payload: str) -> tuple[str, str | None]:
     return normalize_name(payload), None
 
 
+def is_private_npm_package(manifest: dict) -> bool:
+    """True when package.json marks the package as private (not a public registry artifact)."""
+    val = manifest.get("private")
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in {"true", "1", "yes"}
+    return bool(val)
+
+
 def resolve_npm_dependency(alias: str, spec: str) -> tuple[str, str | None] | None:
     """
     Resolve package name and version from a package.json dependency entry.
