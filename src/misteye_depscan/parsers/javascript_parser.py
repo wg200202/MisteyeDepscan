@@ -7,6 +7,7 @@ from pathlib import Path
 from misteye_depscan.models import DependencyItem, PackageType
 from misteye_depscan.parsers.base import (
     DependencyParser,
+    is_local_npm_lock_entry,
     is_npm_package_root_package_json,
     is_private_npm_package,
     normalize_name,
@@ -85,15 +86,18 @@ class JavaScriptParser(DependencyParser):
             "optionalDependencies",
         ):
             deps = data.get(section, {}) or {}
+            manifest_name = str(data.get("name") or "")
             for alias, spec in deps.items():
-                resolved = resolve_npm_dependency(alias, str(spec))
+                resolved = resolve_npm_dependency(
+                    alias, str(spec), package_name=manifest_name
+                )
                 if resolved is None:
                     continue
-                pkg_name, version = resolved
-                raw = f"{pkg_name}@{version}" if version else pkg_name
+                dep_name, version = resolved
+                raw = f"{dep_name}@{version}" if version else dep_name
                 items.append(
                     DependencyItem(
-                        name=pkg_name,
+                        name=dep_name,
                         version=version,
                         package_type=PackageType.NPM.value,
                         source=str(path),
@@ -116,6 +120,8 @@ class JavaScriptParser(DependencyParser):
             if not isinstance(meta, dict):
                 continue
             if is_private_npm_package(meta):
+                continue
+            if is_local_npm_lock_entry(meta):
                 continue
             version = meta.get("version")
             if not version:

@@ -93,20 +93,47 @@ def is_private_npm_package(manifest: dict) -> bool:
     return bool(val)
 
 
-def resolve_npm_dependency(alias: str, spec: str) -> tuple[str, str | None] | None:
+def is_local_npm_spec(spec: str) -> bool:
+    """True for file:/link:/workspace:/git: etc. — not a registry version pin."""
+    raw = str(spec).strip()
+    if not raw:
+        return True
+    lower = raw.lower()
+    return any(lower.startswith(prefix) for prefix in _NON_REGISTRY_SPEC_PREFIXES)
+
+
+def is_local_npm_lock_entry(meta: dict) -> bool:
+    """True when a package-lock entry points at a local path, not the registry."""
+    if meta.get("link") is True:
+        return True
+    resolved = str(meta.get("resolved") or "").strip().lower()
+    if not resolved:
+        return False
+    return is_local_npm_spec(resolved)
+
+
+def resolve_npm_dependency(
+    alias: str,
+    spec: str,
+    *,
+    package_name: str | None = None,
+) -> tuple[str, str | None] | None:
     """
     Resolve package name and version from a package.json dependency entry.
 
     Handles npm aliases such as ``"fdir1": "npm:fdir@1.2.0"`` — uses ``fdir`` and
     ``1.2.0``, not the alias key ``fdir1``. Returns ``None`` for non-registry specs
-    (``file:``, ``workspace:``, ``git:``, etc.).
+    (``file:``, ``workspace:``, ``git:``, etc.) and for self-references
+    (``"my-pkg": "0.0.0"`` inside ``my-pkg``'s own package.json).
     """
+    if package_name and normalize_name(alias) == normalize_name(package_name):
+        return None
     raw = str(spec).strip()
     if not raw:
         return None
-    lower = raw.lower()
-    if any(lower.startswith(prefix) for prefix in _NON_REGISTRY_SPEC_PREFIXES):
+    if is_local_npm_spec(raw):
         return None
+    lower = raw.lower()
     if lower.startswith("npm:"):
         name, version = _parse_npm_alias_payload(raw[4:])
         if not name:
