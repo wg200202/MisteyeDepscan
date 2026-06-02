@@ -50,16 +50,18 @@ def strip_version_operators(spec: str) -> str | None:
     return spec
 
 
-# package.json specs that are not registry packages (skip threat lookup)
-_NON_REGISTRY_SPEC_PREFIXES = (
+# Local monorepo / filesystem specs — not third-party registry or git remotes.
+_LOCAL_NPM_SPEC_PREFIXES = (
     "file:",
     "link:",
     "workspace:",
+)
+
+# Remote git / forge specs — external third-party source (not local workspace).
+_GIT_NPM_SPEC_PREFIXES = (
     "git:",
     "git+",
     "github:",
-    "http:",
-    "https:",
     "bitbucket:",
     "gitlab:",
 )
@@ -93,23 +95,81 @@ def is_private_npm_package(manifest: dict) -> bool:
     return bool(val)
 
 
+def is_git_npm_spec(spec: str) -> bool:
+    """True for git/github/bitbucket/gitlab remote specs — external, not local workspace."""
+    lower = str(spec).strip().lower()
+    return any(lower.startswith(prefix) for prefix in _GIT_NPM_SPEC_PREFIXES)
+
+
+def is_git_npm_resolved(resolved: str) -> bool:
+    """True when a lockfile ``resolved`` field points at a git remote."""
+    lower = str(resolved).strip().lower()
+    return lower.startswith("git+") or lower.startswith("git:")
+
+
 def is_local_npm_spec(spec: str) -> bool:
-    """True for file:/link:/workspace:/git: etc. — not a registry version pin."""
+    """True for file:/link:/workspace: — local monorepo paths, not registry or git remotes."""
     raw = str(spec).strip()
     if not raw:
         return True
     lower = raw.lower()
-    return any(lower.startswith(prefix) for prefix in _NON_REGISTRY_SPEC_PREFIXES)
+    return any(lower.startswith(prefix) for prefix in _LOCAL_NPM_SPEC_PREFIXES)
 
 
-def is_local_npm_lock_entry(meta: dict) -> bool:
-    """True when a package-lock entry points at a local path, not the registry."""
+def _git_spec_version(spec: str) -> str | None:
+    """Extract tag/commit fragment from a git dependency spec (after ``#``)."""
+    text = str(spec).strip()
+    if "#" not in text:
+        return None
+    fragment = text.rsplit("#", 1)[1].strip()
+    if not fragment:
+        return None
+    return strip_version_operators(fragment) or fragment
+
+
+def _is_registry_npm_resolved(resolved: str) -> bool:
+    """True when ``resolved`` is an npm registry (or http(s)) tarball URL."""
+    lower = resolved.strip().lower()
+    return lower.startswith("https://") or lower.startswith("http://")
+
+
+def is_local_npm_lock_entry(meta: dict, pkg_path: str = "") -> bool:
+    """True when a package-lock entry is a **local workspace** package (skip scan).
+
+    External sources that are **not** local and may be scanned when name/version exist:
+
+    - npm registry: ``resolved: https://registry.npmjs.org/...``
+    - git remote: ``resolved: git+https://github.com/...``
+
+    Local workspace examples (skip):
+
+    - ``node_modules/foo``: ``{ "resolved": "scripts/foo", "link": true }``
+    - ``scripts/foo``: ``{ "name": "my-plugin", "version": "0.0.0" }``
+    """
+    resolved = str(meta.get("resolved") or "").strip()
     if meta.get("link") is True:
+        # Workspace symlinks point at repo paths; git links are external.
+        if resolved and is_git_npm_resolved(resolved):
+            return False
         return True
-    resolved = str(meta.get("resolved") or "").strip().lower()
-    if not resolved:
+    if resolved:
+        if _is_registry_npm_resolved(resolved):
+            return False
+        if is_git_npm_resolved(resolved):
+            return False
+        if is_local_npm_spec(resolved):
+            return True
+        # Relative path without URL scheme, e.g. ``scripts/solhint-custom``.
+        if "://" not in resolved:
+            return True
         return False
-    return is_local_npm_spec(resolved)
+    # Workspace package metadata keyed by repo path (not under node_modules/).
+    normalized = pkg_path.replace("\\", "/").strip("/")
+    if normalized and normalized not in {"", "node_modules"} and not normalized.startswith(
+        "node_modules/"
+    ):
+        return True
+    return False
 
 
 def resolve_npm_dependency(
@@ -122,9 +182,10 @@ def resolve_npm_dependency(
     Resolve package name and version from a package.json dependency entry.
 
     Handles npm aliases such as ``"fdir1": "npm:fdir@1.2.0"`` — uses ``fdir`` and
-    ``1.2.0``, not the alias key ``fdir1``. Returns ``None`` for non-registry specs
-    (``file:``, ``workspace:``, ``git:``, etc.) and for self-references
-    (``"my-pkg": "0.0.0"`` inside ``my-pkg``'s own package.json).
+    ``1.2.0``, not the alias key ``fdir1``. Returns ``None`` for local specs
+    (``file:``, ``workspace:``, …), self-references, and empty specs. Git remotes
+    (``git+https://…#tag``) are treated as **external** and resolved via the
+    dependency key plus the ``#`` fragment when present.
     """
     if package_name and normalize_name(alias) == normalize_name(package_name):
         return None
@@ -133,6 +194,8 @@ def resolve_npm_dependency(
         return None
     if is_local_npm_spec(raw):
         return None
+    if is_git_npm_spec(raw):
+        return normalize_name(alias), _git_spec_version(raw)
     lower = raw.lower()
     if lower.startswith("npm:"):
         name, version = _parse_npm_alias_payload(raw[4:])

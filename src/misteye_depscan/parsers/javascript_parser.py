@@ -7,9 +7,9 @@ from pathlib import Path
 from misteye_depscan.models import DependencyItem, PackageType
 from misteye_depscan.parsers.base import (
     DependencyParser,
+    is_git_npm_resolved,
     is_local_npm_lock_entry,
     is_npm_package_root_package_json,
-    is_private_npm_package,
     normalize_name,
     resolve_npm_dependency,
     strip_version_operators,
@@ -58,9 +58,13 @@ class JavaScriptParser(DependencyParser):
         # Root / workspace package.json (not under node_modules): never scan the project's
         # own name@version — only external deps from dependencies/* sections below.
 
-        # Installed package at node_modules/<pkg>/package.json only (not docs/, lib/, etc.)
-        # Skip private packages — they are local/workspace artifacts, not registry deps.
-        if at_package_root and not is_private_npm_package(data):
+        # Installed package at node_modules/<pkg>/package.json only (not docs/, lib/, etc.).
+        # NOTE: we intentionally do NOT skip on a self-declared ``private: true`` here —
+        # that field is controlled by the package itself, so a malicious package could set
+        # it to evade scanning. Real local/workspace packages are symlinks in node_modules
+        # and are not walked into; anything that physically lives under node_modules/<pkg>
+        # was installed (registry/git/tarball) and must be checked.
+        if at_package_root:
             installed_name = str(data.get("name") or "").strip()
             installed_version = strip_version_operators(str(data.get("version") or ""))
             if installed_name and installed_version:
@@ -119,25 +123,30 @@ class JavaScriptParser(DependencyParser):
         for pkg_path, meta in packages.items():
             if not isinstance(meta, dict):
                 continue
-            if is_private_npm_package(meta):
-                continue
-            if is_local_npm_lock_entry(meta):
-                continue
-            version = meta.get("version")
-            if not version:
-                continue
             if pkg_path in {"", "node_modules"}:
+                continue
+            # Decide local-vs-external purely from the lockfile's resolved/link/path,
+            # never from a self-declared ``private`` flag (which can be forged to evade).
+            if is_local_npm_lock_entry(meta, pkg_path):
+                continue
+            resolved = str(meta.get("resolved") or "")
+            version = meta.get("version")
+            # Registry entries always carry a version; git remotes sometimes omit it,
+            # so keep git deps (name-only) instead of silently dropping them.
+            if not version and not is_git_npm_resolved(resolved):
                 continue
             path_name = pkg_path.split("node_modules/")[-1]
             name = normalize_name(str(meta.get("name") or path_name))
+            if not name:
+                continue
             items.append(
                 DependencyItem(
                     name=name,
-                    version=str(version),
+                    version=str(version) if version else None,
                     package_type=PackageType.NPM.value,
                     source=str(path),
                     evidence=f"packages.{pkg_path}",
-                    raw=f"{name}@{version}",
+                    raw=f"{name}@{version}" if version else name,
                 )
             )
         if items:
