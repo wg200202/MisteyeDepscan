@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Callable
@@ -11,6 +12,7 @@ from misteye_depscan.api import MistEyeClient
 from misteye_depscan.collectors import collect_global_dependencies
 from misteye_depscan.config import ensure_api_key, load_api_key, prompt_and_save_api_key
 from misteye_depscan.dashboard import ScanUI, create_scan_ui, dashboard_enabled
+from misteye_depscan.exceptions import ScanInterrupted
 from misteye_depscan.models import DependencyItem, PackageType
 from misteye_depscan.ecosystems import parse_ecosystem_option
 from misteye_depscan.parsers import collect_project_dependencies
@@ -519,12 +521,26 @@ def _emit_report(
     return report.exit_code
 
 
+def _exit_interrupted(*, completed: int = 0, total: int = 0) -> int:
+    """Print a single line and exit without waiting on background HTTP threads."""
+    if total > 0:
+        print(
+            f"\nScan interrupted ({completed}/{total} completed).",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print("\nScan interrupted.", file=sys.stderr, flush=True)
+    os._exit(130)
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         return _main_inner(argv)
+    except ScanInterrupted as exc:
+        return _exit_interrupted(completed=exc.completed, total=exc.total)
     except KeyboardInterrupt:
-        print("\nAborted.", file=sys.stderr)
-        return 130
+        return _exit_interrupted()
 
 
 def _main_inner(argv: list[str] | None = None) -> int:
@@ -554,8 +570,4 @@ def _main_inner(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except KeyboardInterrupt:
-        print("\nAborted.", file=sys.stderr)
-        raise SystemExit(130)
+    raise SystemExit(main())

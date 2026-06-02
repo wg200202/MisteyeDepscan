@@ -26,6 +26,7 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from misteye_depscan.banner import MISTEYE_BANNER
+from misteye_depscan.exceptions import ScanInterrupted
 from misteye_depscan.models import DetectionResult, ScanStatus
 from misteye_depscan.terminal import use_color
 
@@ -185,11 +186,15 @@ class RichDashboard(ScanUI):
             raise
         return self
 
-    def __exit__(self, *exc: object) -> None:
+    def __exit__(self, exc_type: type[BaseException] | None, *exc: object) -> None:
+        interrupted = exc_type in (KeyboardInterrupt, ScanInterrupted)
         try:
-            # Keep the final frame on screen briefly so the result is readable.
-            self._live.refresh()
-            time.sleep(0.4)
+            if interrupted:
+                self._phase = "INTERRUPTED"
+            else:
+                # Keep the final frame on screen briefly so the result is readable.
+                self._live.refresh()
+                time.sleep(0.4)
         except Exception as err:  # pragma: no cover - defensive
             print(f"[dashboard] refresh on exit failed: {err}", file=sys.stderr)
         finally:
@@ -334,6 +339,7 @@ class RichDashboard(ScanUI):
             "COLLECT": "yellow",
             "SCAN": "bold cyan",
             "DONE": "bold green",
+            "INTERRUPTED": "bold yellow",
         }.get(self._phase, "white")
         grid.add_row("Phase", Text(self._phase, style=phase_style))
         grid.add_row("Elapsed", Text(self._elapsed(), style="white"))

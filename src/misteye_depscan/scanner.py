@@ -4,6 +4,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
+from misteye_depscan.exceptions import ScanInterrupted
 from misteye_depscan.api import (
     API_STATUS_MALICIOUS,
     API_STATUS_UNKNOWN,
@@ -43,45 +44,42 @@ class DependencyScanner:
         total = len(dependencies)
         completed = 0
 
-        with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            futures = {
-                executor.submit(self._scan_one, dependency): dependency
-                for dependency in dependencies
-            }
-            try:
-                for future in as_completed(futures):
-                    dependency = futures[future]
-                    try:
-                        result = future.result()
-                    except Exception as exc:
-                        result = DetectionResult(
-                            dependency=dependency,
-                            api_status=None,
-                            status=ScanStatus.ERROR,
-                            error=str(exc),
-                        )
-                    results.append(result)
-                    completed += 1
-                    if self.progress_callback is not None:
-                        try:
-                            self.progress_callback(completed, total, result)
-                        except Exception as exc:
-                            print(
-                                f"Progress callback failed: {exc}",
-                                file=sys.stderr,
-                                flush=True,
-                            )
-                    elif self.show_progress:
-                        print(self._format_progress_line(completed, total, result), flush=True)
-            except KeyboardInterrupt:
-                for f in futures:
-                    f.cancel()
-                executor.shutdown(wait=False, cancel_futures=True)
-                if self.show_progress:
-                    print(
-                        f"\nScan interrupted ({completed}/{total} completed).",
-                        flush=True,
+        executor = ThreadPoolExecutor(max_workers=self.workers)
+        futures = {
+            executor.submit(self._scan_one, dependency): dependency
+            for dependency in dependencies
+        }
+        try:
+            for future in as_completed(futures):
+                dependency = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    result = DetectionResult(
+                        dependency=dependency,
+                        api_status=None,
+                        status=ScanStatus.ERROR,
+                        error=str(exc),
                     )
+                results.append(result)
+                completed += 1
+                if self.progress_callback is not None:
+                    try:
+                        self.progress_callback(completed, total, result)
+                    except Exception as exc:
+                        print(
+                            f"Progress callback failed: {exc}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                elif self.show_progress:
+                    print(self._format_progress_line(completed, total, result), flush=True)
+        except KeyboardInterrupt:
+            for pending in futures:
+                pending.cancel()
+            raise ScanInterrupted(completed, total) from None
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
         report.results = sorted(
             results,
