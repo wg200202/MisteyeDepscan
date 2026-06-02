@@ -125,7 +125,7 @@ def collect_project_dependencies(
     include_optional: bool = False,
     scan_node_modules: bool = True,
     max_depth: int | None = None,
-) -> tuple[list[DependencyItem], list[str], list[Path]]:
+) -> tuple[list[DependencyItem], list[str], list[str], list[Path]]:
     """
     Collect dependencies from manifest files and (for npm) installed node_modules packages.
 
@@ -133,8 +133,7 @@ def collect_project_dependencies(
     ``base.DEFAULT_MAX_DEPTH``).  Pass ``None`` for unlimited depth or ``0`` to
     only scan files directly in ``root``.
 
-    Returns ``(dependencies, warnings, discovered_files)`` where *discovered_files*
-    is the list of manifest / lock / package.json paths that were actually parsed.
+    Returns ``(dependencies, warnings, info, discovered_files)``.
     """
     from misteye_depscan.parsers.base import DEFAULT_MAX_DEPTH
 
@@ -146,6 +145,7 @@ def collect_project_dependencies(
 
     items: list[DependencyItem] = []
     warnings: list[str] = []
+    info: list[str] = []
     discovered_files: list[Path] = []
 
     manifest_files = find_manifest_files(
@@ -166,11 +166,11 @@ def collect_project_dependencies(
             for pkg_json in nm_files:
                 items.extend(_NPM_PARSER.parse(pkg_json))
         elif "package.json" in {p.name for p in manifest_files}:
-            warnings.append(
+            info.append(
                 "npm ecosystem detected but no node_modules/ tree found (installed packages not scanned)."
             )
 
-    return dedupe_dependencies(items), warnings, discovered_files
+    return dedupe_dependencies(items), warnings, info, discovered_files
 
 
 def dedupe_dependencies(items: list[DependencyItem]) -> list[DependencyItem]:

@@ -172,62 +172,71 @@ def collect_installed_crate_dependencies(
     installed: InstalledCrate,
     *,
     home: Path | None = None,
-) -> tuple[list[DependencyItem], list[str]]:
-    """Collect root package and lockfile dependencies for one global install."""
+) -> tuple[list[DependencyItem], list[str], list[str]]:
+    """Collect root package and lockfile dependencies for one global install.
+
+    Returns ``(items, warnings, info)``. Partial-coverage notes (no Cargo.lock, git
+    install) go to *info*; hard failures go to *warnings*.
+    """
     cargo_dir = home or cargo_home()
     warnings: list[str] = []
+    info: list[str] = []
     items = [_root_dependency(installed)]
 
     if installed.source_kind != "registry":
-        warnings.append(
+        info.append(
             f"cargo-install:{installed.name}: only root package checked "
             f"({installed.source_kind or 'unknown'} install; no registry Cargo.lock lookup)."
         )
-        return items, warnings
+        return items, warnings, info
 
     lock_path = find_lock_in_registry_src(cargo_dir, installed.name, installed.version)
     if lock_path is not None:
         items.extend(_parse_lock_path(lock_path, installed))
-        return items, warnings
+        return items, warnings, info
 
     lock_text = read_lock_from_crate_cache(cargo_dir, installed.name, installed.version)
     if lock_text:
         items.extend(_parse_lock_text(lock_text, installed))
-        return items, warnings
+        return items, warnings, info
 
-    warnings.append(
+    info.append(
         f"cargo-install:{installed.name}: Cargo.lock not found; checking root package only."
     )
-    return items, warnings
+    return items, warnings, info
 
 
-def collect_cargo_install_global() -> tuple[list[DependencyItem], list[str]]:
+def collect_cargo_install_global() -> tuple[list[DependencyItem], list[str], list[str]]:
     """Run ``cargo install --list`` and expand each install via its ``Cargo.lock`` when possible."""
     result = run_command(["cargo", "install", "--list"], timeout=120.0)
     if result is None:
         logger.warning("cargo install --list failed: cargo not found or command error.")
-        return [], ["cargo install --list failed: cargo not found."]
+        return [], ["cargo install --list failed: cargo not found."], []
     if result.returncode != 0:
         message = (result.stderr or result.stdout or "").strip() or f"exit {result.returncode}"
         logger.warning("cargo install --list exited %s: %s", result.returncode, message)
-        return [], [f"cargo install --list failed: {message}"]
+        return [], [f"cargo install --list failed: {message}"], []
 
     installed_crates = parse_cargo_install_list(result.stdout or "")
     if not installed_crates:
-        return [], ["No packages found via cargo-install."]
+        return [], [], ["No packages found via cargo-install."]
 
     items: list[DependencyItem] = []
     warnings: list[str] = []
+    info: list[str] = []
     for installed in installed_crates:
         try:
-            collected, install_warnings = collect_installed_crate_dependencies(installed)
+            collected, install_warnings, install_info = collect_installed_crate_dependencies(
+                installed
+            )
             items.extend(collected)
             warnings.extend(install_warnings)
+            info.extend(install_info)
         except Exception as exc:  # noqa: BLE001
             logger.warning("cargo-install:%s collection failed: %s", installed.name, exc)
             warnings.append(f"cargo-install:{installed.name} failed: {exc}")
             items.append(_root_dependency(installed))
-    return items, warnings
+    return items, warnings, info
 
 
 class CargoInstallCollector(GlobalCollector):

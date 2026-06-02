@@ -68,6 +68,7 @@ class ScanReport:
     no_check_count: int = 0
     degraded: bool = False
     warnings: list[str] = field(default_factory=list)
+    info: list[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:

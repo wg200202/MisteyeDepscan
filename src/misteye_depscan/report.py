@@ -79,6 +79,11 @@ def render_table(report: ScanReport) -> str:
         f"Check failed: {report.error_count}",
         "",
     ]
+    if report.info:
+        lines.append(colorize("Info:", CYAN))
+        for note in report.info:
+            lines.append(f"  - {note}")
+        lines.append("")
     if report.warnings:
         lines.append(colorize("Warnings:", YELLOW))
         for warning in report.warnings:
@@ -140,6 +145,7 @@ def render_json(report: ScanReport) -> str:
             "exit_code": report.exit_code,
         },
         "warnings": report.warnings,
+        "info": report.info,
         "results": [_result_to_dict(result) for result in report.results],
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)

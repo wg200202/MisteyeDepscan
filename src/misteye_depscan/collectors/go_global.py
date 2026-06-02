@@ -110,14 +110,15 @@ def parse_go_version_m_output(text: str, *, source: str, evidence: str) -> list[
     return items
 
 
-def collect_go_install_global() -> tuple[list[DependencyItem], list[str]]:
+def collect_go_install_global() -> tuple[list[DependencyItem], list[str], list[str]]:
     """Scan ``GOBIN`` / ``GOPATH/bin`` executables installed via ``go install``."""
     bin_dirs = discover_go_bin_dirs()
     if not bin_dirs:
-        return [], ["go install scan skipped: could not resolve Go bin directories."]
+        return [], [], ["go install scan skipped: could not resolve Go bin directories."]
 
     items: list[DependencyItem] = []
     warnings: list[str] = []
+    info: list[str] = []
     seen_bins: set[str] = set()
     scanned_bins = 0
     failed_bins = 0
@@ -160,8 +161,8 @@ def collect_go_install_global() -> tuple[list[DependencyItem], list[str]]:
     elif failed_bins:
         warnings.append(f"go-global: {failed_bins} binary(s) could not be inspected.")
     if not items:
-        warnings.append("No packages found via go-global.")
-    return items, warnings
+        info.append("No packages found via go-global.")
+    return items, warnings, info
 
 
 class GoInstallCollector(GlobalCollector):

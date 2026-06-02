@@ -225,6 +225,42 @@ def _print_discovered_files(
             emit(f"  {rel}/ ({count} packages)")
 
 
+def _dependency_count_by_ecosystem(dependencies: list[DependencyItem]) -> str:
+    """Format ``npm=120, pypi=80, ...`` for display after the dependency total."""
+    if not dependencies:
+        return ""
+    from collections import Counter
+
+    by_type = Counter(d.package_type for d in dependencies)
+    parts: list[str] = []
+    if by_type.get("package:npm"):
+        parts.append(f"npm={by_type['package:npm']}")
+    if by_type.get("package:cratesio"):
+        parts.append(f"rust={by_type['package:cratesio']}")
+    if by_type.get("package:go"):
+        parts.append(f"go={by_type['package:go']}")
+    if by_type.get("package:rubygems"):
+        parts.append(f"rubygems={by_type['package:rubygems']}")
+    if by_type.get("package:pypi"):
+        parts.append(f"pypi={by_type['package:pypi']}")
+    return ", ".join(parts)
+
+
+def _format_dependencies_to_check_line(
+    dependencies: list[DependencyItem],
+    *,
+    ecosystems: str | None = None,
+) -> str:
+    """One summary line: total count plus per-ecosystem breakdown (visible in the dashboard)."""
+    total = len(dependencies)
+    breakdown = _dependency_count_by_ecosystem(dependencies)
+    if breakdown:
+        return f"Dependencies to check: {total} ({breakdown})"
+    if ecosystems:
+        return f"Dependencies to check: {total} | Ecosystems: {ecosystems}"
+    return f"Dependencies to check: {total}"
+
+
 def _resolve_api_key() -> str:
     key = load_api_key(interactive=False)
     if key:
@@ -286,7 +322,7 @@ def run_scan(args: argparse.Namespace) -> int:
         title="MistEye DepScan",
     )
 
-    def _collect() -> tuple[list[DependencyItem], list[str], list[Path]]:
+    def _collect() -> tuple[list[DependencyItem], list[str], list[str], list[Path]]:
         return collect_project_dependencies(
             root,
             ecosystems=ecosystems,
@@ -299,29 +335,11 @@ def run_scan(args: argparse.Namespace) -> int:
         ui.set_header(Mode="project scan", Target=str(root), Ecosystems=eco_text, Depth=depth_label)
         ui.set_phase("COLLECT")
         ui.log(f"Scan depth: {depth_label} (recursive manifest discovery)")
-        dependencies, collect_warnings, discovered_files = _collect_with_ui(
+        dependencies, collect_warnings, collect_info, discovered_files = _collect_with_ui(
             ui, _collect, f"Scanning {root} ..."
         )
-        ui.log(f"Ecosystems: {eco_text}")
         _print_discovered_files(root, discovered_files, ui.log)
-        if dependencies:
-            from collections import Counter
-
-            by_type = Counter(d.package_type for d in dependencies)
-            parts = []
-            if by_type.get("package:npm"):
-                parts.append(f"npm={by_type['package:npm']}")
-            if by_type.get("package:cratesio"):
-                parts.append(f"rust={by_type['package:cratesio']}")
-            if by_type.get("package:go"):
-                parts.append(f"go={by_type['package:go']}")
-            if by_type.get("package:rubygems"):
-                parts.append(f"rubygems={by_type['package:rubygems']}")
-            if by_type.get("package:pypi"):
-                parts.append(f"pypi={by_type['package:pypi']}")
-            if parts:
-                ui.log(f"Collected dependencies: {', '.join(parts)}")
-        ui.log(f"Dependencies to check: {len(dependencies)}")
+        ui.log(_format_dependencies_to_check_line(dependencies, ecosystems=eco_text))
         report = _run_detection(
             dependencies,
             client=client,
@@ -329,6 +347,7 @@ def run_scan(args: argparse.Namespace) -> int:
             output_json=args.json,
             output_sarif=args.sarif,
             warnings=collect_warnings,
+            info=collect_info,
             ui=ui,
         )
 
@@ -359,7 +378,7 @@ def run_global(args: argparse.Namespace) -> int:
     with ui:
         ui.set_header(Mode="global env", Target="local machine")
         ui.set_phase("COLLECT")
-        dependencies, warnings = _collect_with_ui(
+        dependencies, warnings, info = _collect_with_ui(
             ui,
             lambda: collect_global_dependencies(
                 python_only=args.python_only,
@@ -370,13 +389,13 @@ def run_global(args: argparse.Namespace) -> int:
             "Scanning global environments ...",
         )
         if not dependencies:
-            warnings.append("No global packages were discovered.")
+            info.append("No global packages were discovered.")
         else:
             sources = sorted({d.source for d in dependencies})
             ui.log("Scan sources:")
             for src in sources:
                 ui.log(f"  {src}")
-        ui.log(f"Dependencies to check: {len(dependencies)}")
+        ui.log(_format_dependencies_to_check_line(dependencies))
         report = _run_detection(
             dependencies,
             client=client,
@@ -384,6 +403,7 @@ def run_global(args: argparse.Namespace) -> int:
             output_json=args.json,
             output_sarif=args.sarif,
             warnings=warnings,
+            info=info,
             ui=ui,
         )
 
@@ -426,6 +446,7 @@ def run_check(args: argparse.Namespace) -> int:
             output_json=args.json,
             output_sarif=args.sarif,
             warnings=[],
+            info=[],
             ui=ui,
         )
 
@@ -446,6 +467,7 @@ def _run_detection(
     output_json: bool,
     output_sarif: bool,
     warnings: list[str],
+    info: list[str],
     ui: ScanUI,
 ):
     """Run the detection phase inside the (already started) UI and return the report."""
@@ -457,6 +479,7 @@ def _run_detection(
     )
     report = scanner.scan_dependencies(dependencies)
     report.warnings.extend(warnings)
+    report.info.extend(info)
     ui.set_phase("DONE")
     return report
 

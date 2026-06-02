@@ -292,7 +292,7 @@ def collect_global_dependencies(
     node_only: bool = False,
     rust_only: bool = False,
     go_only: bool = False,
-) -> tuple[list[DependencyItem], list[str]]:
+) -> tuple[list[DependencyItem], list[str], list[str]]:
     collectors = list(DEFAULT_GLOBAL_COLLECTORS)
 
     if python_only:
@@ -306,20 +306,23 @@ def collect_global_dependencies(
 
     items: list[DependencyItem] = []
     warnings: list[str] = []
+    info: list[str] = []
     for collector in collectors:
         try:
             if collector.name == "cargo-install":
-                collected, cargo_warnings = collect_cargo_install_global()
+                collected, cargo_warnings, cargo_info = collect_cargo_install_global()
                 warnings.extend(cargo_warnings)
+                info.extend(cargo_info)
             elif collector.name == "go-global":
-                collected, go_warnings = collect_go_install_global()
+                collected, go_warnings, go_info = collect_go_install_global()
                 warnings.extend(go_warnings)
+                info.extend(go_info)
             else:
                 collected = collector.collect()
             if collected:
                 items.extend(collected)
             elif collector.name not in {"cargo-install", "go-global"}:
-                warnings.append(f"No packages found via {collector.name}.")
+                info.append(f"No packages found via {collector.name}.")
         except Exception as exc:  # noqa: BLE001 - collector failures should not abort scan
             warnings.append(f"{collector.name} failed: {exc}")
-    return dedupe_dependencies(items), warnings
+    return dedupe_dependencies(items), warnings, info
