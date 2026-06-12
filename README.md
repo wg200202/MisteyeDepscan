@@ -4,6 +4,12 @@
 
 A minimal-dependency CLI that calls the [MistEye](https://app.misteye.io/api-docs) threat intelligence API to scan project dependencies and globally installed packages for known malicious packages and versions.
 
+## Privacy
+
+> **Important:** DepScan only uploads **package names and their version numbers** (e.g. `requests==2.32.3`, `lodash@4.17.21`) to the MistEye API for threat lookup.
+>
+> It does **not** collect or transmit your source code, file contents, project paths, environment variables, API keys, credentials, or any other private data. Dependency discovery and manifest parsing run entirely on your machine.
+
 ## Features
 
 - Minimal runtime dependencies (Python 3.10+; `tomli` is installed automatically on 3.10 for `pyproject.toml` parsing)
