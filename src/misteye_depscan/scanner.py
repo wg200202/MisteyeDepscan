@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 from misteye_depscan.exceptions import ScanInterrupted
 from misteye_depscan.api import (
@@ -35,16 +38,83 @@ class DependencyScanner:
         # the inline progress line is then suppressed.
         self.progress_callback = progress_callback
 
-    def scan_dependencies(self, dependencies: list[DependencyItem]) -> ScanReport:
-        report = ScanReport(dependency_count=len(dependencies))
+    def scan_dependencies(
+        self,
+        dependencies: list[DependencyItem],
+        *,
+        retry_errors: bool = True,
+        on_retry_begin: Callable[[int], None] | None = None,
+        on_retry_progress: Callable[[int, int, DetectionResult], None] | None = None,
+    ) -> ScanReport:
         if not dependencies:
-            return report
+            return ScanReport(dependency_count=0)
 
+        results = self._run_scan_batch(dependencies, workers=self.workers)
+
+        if retry_errors:
+            failed = [item for item in results if item.status == ScanStatus.ERROR]
+            if failed:
+                if on_retry_begin is not None:
+                    try:
+                        on_retry_begin(len(failed))
+                    except Exception as exc:
+                        logger.warning("Retry begin callback failed: %s", exc)
+                        print(
+                            f"Retry begin callback failed: {exc}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+
+                retry_deps = [item.dependency for item in failed]
+                retry_results = self._run_scan_batch(
+                    retry_deps,
+                    workers=1,
+                    progress_callback=on_retry_progress,
+                    progress_tag="retry",
+                )
+                retry_map = {item.dependency.key: item for item in retry_results}
+                results = [
+                    retry_map.get(item.dependency.key, item)
+                    if item.status == ScanStatus.ERROR
+                    else item
+                    for item in results
+                ]
+
+                recovered = sum(
+                    1
+                    for item in failed
+                    if retry_map.get(item.dependency.key, item).status != ScanStatus.ERROR
+                )
+                still_failed = len(failed) - recovered
+                report = self._build_report(results, len(dependencies))
+                report.info.append(
+                    f"Retried {len(failed)} failed package(s); "
+                    f"{recovered} recovered, {still_failed} still failed."
+                )
+                return report
+
+        return self._build_report(results, len(dependencies))
+
+    def _run_scan_batch(
+        self,
+        dependencies: list[DependencyItem],
+        *,
+        workers: int | None = None,
+        progress_callback: Callable[[int, int, DetectionResult], None] | None = None,
+        progress_tag: str | None = None,
+    ) -> list[DetectionResult]:
         results: list[DetectionResult] = []
         total = len(dependencies)
         completed = 0
+        callback = (
+            progress_callback
+            if progress_callback is not None
+            else self.progress_callback
+        )
+        show_progress = self.show_progress if callback is None else False
+        pool_workers = self.workers if workers is None else max(1, workers)
 
-        executor = ThreadPoolExecutor(max_workers=self.workers)
+        executor = ThreadPoolExecutor(max_workers=pool_workers)
         futures = {
             executor.submit(self._scan_one, dependency): dependency
             for dependency in dependencies
@@ -55,6 +125,11 @@ class DependencyScanner:
                 try:
                     result = future.result()
                 except Exception as exc:
+                    logger.warning(
+                        "Unexpected error scanning %s: %s",
+                        dependency.target,
+                        exc,
+                    )
                     result = DetectionResult(
                         dependency=dependency,
                         api_status=None,
@@ -63,17 +138,26 @@ class DependencyScanner:
                     )
                 results.append(result)
                 completed += 1
-                if self.progress_callback is not None:
+                if callback is not None:
                     try:
-                        self.progress_callback(completed, total, result)
+                        callback(completed, total, result)
                     except Exception as exc:
+                        logger.warning("Progress callback failed: %s", exc)
                         print(
                             f"Progress callback failed: {exc}",
                             file=sys.stderr,
                             flush=True,
                         )
-                elif self.show_progress:
-                    print(self._format_progress_line(completed, total, result), flush=True)
+                elif show_progress:
+                    print(
+                        self._format_progress_line(
+                            completed,
+                            total,
+                            result,
+                            tag=progress_tag,
+                        ),
+                        flush=True,
+                    )
         except KeyboardInterrupt:
             for pending in futures:
                 pending.cancel()
@@ -81,6 +165,11 @@ class DependencyScanner:
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
 
+        return results
+
+    @staticmethod
+    def _build_report(results: list[DetectionResult], dependency_count: int) -> ScanReport:
+        report = ScanReport(dependency_count=dependency_count)
         report.results = sorted(
             results,
             key=lambda item: (item.status != ScanStatus.MALICIOUS, item.dependency.name),
@@ -100,7 +189,11 @@ class DependencyScanner:
 
     @staticmethod
     def _format_progress_line(
-        completed: int, total: int, result: DetectionResult
+        completed: int,
+        total: int,
+        result: DetectionResult,
+        *,
+        tag: str | None = None,
     ) -> str:
         dep = result.dependency
         target = dep.target
@@ -117,7 +210,8 @@ class DependencyScanner:
         )
         if stale_hint:
             detail += colorize(f" · {stale_hint}", YELLOW)
-        prefix = colorize(f"[{completed}/{total}]", DIM)
+        label = f"{tag} {completed}/{total}" if tag else f"{completed}/{total}"
+        prefix = colorize(f"[{label}]", DIM)
         line = f"{prefix} {target} → {detail}"
         if result.status == ScanStatus.MALICIOUS:
             line += f"\n       Source: {dep.source}"

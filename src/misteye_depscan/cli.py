@@ -479,7 +479,11 @@ def _run_detection(
         show_progress=not quiet and not output_json and not output_sarif,
         progress_callback=ui.on_progress if ui.is_live else None,
     )
-    report = scanner.scan_dependencies(dependencies)
+    report = scanner.scan_dependencies(
+        dependencies,
+        on_retry_begin=ui.begin_retry,
+        on_retry_progress=ui.on_retry_progress if ui.is_live else None,
+    )
     report.warnings.extend(warnings)
     report.info.extend(info)
     ui.set_phase("DONE")

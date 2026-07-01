@@ -116,6 +116,12 @@ class ScanUI:
     def on_progress(self, completed: int, total: int, result: DetectionResult) -> None:
         """Report one finished package result."""
 
+    def begin_retry(self, total: int) -> None:
+        """Signal that a post-scan retry pass is starting for *total* failed packages."""
+
+    def on_retry_progress(self, completed: int, total: int, result: DetectionResult) -> None:
+        """Report one retried package result."""
+
 
 class PlainScanUI(ScanUI):
     """Sequential stderr output. Reproduces the historical CLI behavior."""
@@ -128,6 +134,10 @@ class PlainScanUI(ScanUI):
     def log(self, message: str) -> None:
         if not self.quiet:
             print(message, file=sys.stderr)
+
+    def begin_retry(self, total: int) -> None:
+        if not self.quiet:
+            print(f"Retrying {total} failed package(s)...", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +248,29 @@ class RichDashboard(ScanUI):
         if status == ScanStatus.MALICIOUS:
             self._threats.append(self._format_threat_line(result))
             self._threat_levels.append((self._severity_of(result) or "").lower())
+        if completed >= total:
+            self._phase = "DONE"
+
+    def begin_retry(self, total: int) -> None:
+        self._phase = "RETRY"
+        self.log(f"Retrying {total} failed package(s)...")
+
+    def on_retry_progress(self, completed: int, total: int, result: DetectionResult) -> None:
+        status = result.status
+        if status != ScanStatus.ERROR:
+            self._errors = max(0, self._errors - 1)
+            if status in (ScanStatus.MALICIOUS, ScanStatus.UNKNOWN):
+                self._scanned += 1
+            if status == ScanStatus.MALICIOUS:
+                self._malicious += 1
+                self._threats.append(self._format_threat_line(result))
+                self._threat_levels.append((self._severity_of(result) or "").lower())
+            elif status == ScanStatus.UNKNOWN:
+                self._unknown += 1
+
+        line = self._format_result_line(completed, total, result)
+        prefix = Text("[retry] ", style="cyan")
+        self._results.append(prefix + line)
         if completed >= total:
             self._phase = "DONE"
 
